@@ -1,0 +1,77 @@
+🗺️ Roadmap de Desarrollo: Sistema E-Commerce & Logística
+[Fase 1: Cimientos] ──► [Fase 2: El Corazón (Web)] ──► [Fase 3: Automatización WA] ──► [Fase 4: Logística (App)]
+🏗️ Fase 1: Cimientos y Arquitectura Base
+El objetivo es dejar la base de datos lista y la estructura del proyecto en PHP (MVC) bien armada.
+
+Actividad 1.1: Crear la base de datos en MySQL con el script final (tablas, relaciones e índices).
+
+Actividad 1.2: Configurar el entorno de desarrollo y la estructura de carpetas MVC.
+
+Actividad 1.3: Desarrollar la conexión a la base de datos (PDO) y el sistema de autenticación básico (Login, Logout y manejo de sesiones seguras por Roles: Admin, Staff, Delivery).
+
+🖥️ Fase 2: Backend & Dashboard (Módulos Críticos)
+Aquí crearemos las funciones del sistema donde el administrador y el staff gestionan el negocio.
+
+Actividad 2.1: Módulo de Usuarios: CRUD (Crear, Leer, Actualizar, Eliminar) controlado estrictamente por el Admin.
+
+Actividad 2.2: Módulo de Productos: Registro de productos, control de stock y campos para el lector de código de barras. Lógica para productos "Por Encargo".
+
+Actividad 2.3: Módulo de Pedidos (Dashboard): Pantalla para que el Staff vea los pedidos entrantes y sus estados.
+
+💬 Fase 3: Integración de WhatsApp y Flujo del Cliente
+En esta fase nos enfocamos en la experiencia del comprador y la automatización del chat.
+
+Actividad 3.1: Crear la simulación o integración de la API de WhatsApp para el envío automático de notificaciones al cliente cuando se genera un pedido.
+
+Actividad 3.2: Desarrollar los enlaces dinámicos para el cliente (Aceptar pedido / Cancelar / Editar Carrito desde la web).
+
+Actividad 3.3: Módulo de Pagos: Pantalla en el dashboard para que el Staff verifique los comprobantes de pago subidos o confirme el cobro del "seguro de embalaje" para contraentregas.
+
+📦 Fase 4: Logística, Escáner y Aplicación Móvil (Staff & Delivery)
+La fase final donde conectamos el empaque físico con la entrega de última milla.
+
+Actividad 4.1: Módulo de Picking (Staff): Implementar la lógica para que el Staff use el escáner de código de barras, valide que los productos empacados coincidan con el pedido y cambie el estado a "Listo para Despacho".
+
+Actividad 4.2: Módulo de Ruta (Delivery): Vista móvil optimizada para el repartidor donde ve sus pedidos asignados.
+
+Actividad 4.3: Firma Digital y Cierre: Implementar el panel de firma en la app móvil (HTML5 Canvas) para capturar la firma del cliente, generar el código de despacho y marcar el pedido como "Entregado".
+
+
+
+
+
+estructura del proyecto
+
+ecommerce-logistica/
+│
+├── config/                 # Configuración global del sistema
+│   └── database.php        # Conexión a MySQL usando PDO
+│
+├── core/                   # Archivos base del framework / enrutador
+│   └── Router.php          # Manejador de rutas URL
+│
+├── src/                    # Código fuente de la aplicación (MVC)
+│   ├── Models/             # ¡Aquí va TODA la lógica de negocio y SQL!
+│   │   ├── Usuario.php
+│   │   ├── Producto.php
+│   │   └── Pedido.php
+│   │
+│   ├── Controllers/        # Orquestadores (reciben datos y llaman al Modelo)
+│   │   ├── AuthController.php
+│   │   ├── ProductoController.php
+│   │   └── PedidoController.php
+│   │
+│   └── Views/              # Pantallas e interfaces de usuario
+│       ├── auth/           # Login
+│       ├── admin/          # Dashboard del Administrador
+│       ├── staff/          # Interfaz de empaque y escáner
+│       └── delivery/       # Vista optimizada para repartidores
+│
+├── public/                 # ÚNICA carpeta accesible desde el navegador
+│   ├── css/                # Estilos (Bootstrap, Tailwind, etc.)
+│   ├── js/                 # Scripts (Escáner de barras, Firma digital)
+│   ├── uploads/            # Comprobantes de pago y firmas guardadas
+│   ├── .htaccess           # Redirección de URLs amigables
+│   └── index.php           # El enrutador principal (Front Controller)
+│
+└── .htaccess               # Protección para denegar acceso a carpetas internas
