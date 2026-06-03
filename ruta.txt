@@ -75,3 +75,91 @@ ecommerce-logistica/
 │   └── index.php           # El enrutador principal (Front Controller)
 │
 └── .htaccess               # Protección para denegar acceso a carpetas internas
+
+
+🗺️ Hoja de Ruta: Evolución a API Enterprise
+[Fase 1: Seguridad JWT & Sanitización] ──> [Fase 2: Logística Inmune (Mercado Libre)] ──> [Fase 3: Liquidación de Cajas (Rappi)]
+🔒 Fase 1: Seguridad de Nivel Empresarial (Cimientos de la API)
+El objetivo aquí es dejar de depender de las cookies del navegador para que tu API pueda conectarse de forma nativa y ultra segura con aplicaciones móviles y el lector de barras del celular.
+
+Hito 1.1: Autenticación Stateless con JWT (JSON Web Tokens)
+
+Eliminaremos $_SESSION. Al iniciar sesión, el backend generará un token cifrado temporal.
+
+Crearemos un Middleware de Autenticación que interceptará cada petición, leerá el token en la cabecera Authorization: Bearer y verificará el rol del usuario en milisegundos.
+
+Hito 1.2: Capa Protectora Anti-Inyección (Sanitización Global)
+
+Implementaremos un filtro centralizado en el enrutador (Router.php) que limpie de forma automática caracteres especiales, scripts maliciosos y etiquetas HTML de cualquier variable recibida en $_POST.
+
+Hito 1.3: Blindaje Multimedia en el Uploader
+
+Modificaremos tu clase Uploader.php. En lugar de solo mover el archivo que el usuario sube, usaremos la librería nativa de PHP (GD) para re-procesar y re-crear la imagen en el servidor. Esto destruye cualquier código malicioso oculto (malware) dentro de los metadatos de las fotos de productos o comprobantes de pago.
+
+📦 Fase 2: Logística de Flujo Continuo (Inspirado en Mercado Libre)
+El objetivo es prever todos los escenarios caóticos que ocurren en la calle cuando se intenta entregar un paquete, asegurando que el inventario nunca se descuadre.
+
+Hito 2.1: Gestión Avanzada de Novedades y Fallos en Ruta
+
+Añadiremos los estados no_entregado (el cliente no estaba) y rechazado_cliente (no quiso el producto).
+
+Regla de Negocio Automatizada: Si el repartidor marca el pedido como rechazado_cliente, el sistema ejecutará en cadena el método Pedido::devolverStockProductos() de forma automática, regresando los artículos al inventario sin intervención del administrador.
+
+Hito 2.2: Tabla Histórica de Tracking (Línea de Tiempo del Pedido)
+
+Crearemos la tabla pedido_tracking. Cada vez que el pedido mute de estado (pendiente -> alistando -> en_ruta -> entregado), se guardará un registro cronológico simple. Esto alimentará la barra de progreso que el cliente verá en su pantalla web.
+
+💰 Fase 3: Automatización Financiera y Arqueo (Inspirado en Rappi)
+El objetivo es controlar cada peso que se mueve en la calle. El administrador sabrá con cuánta plata física salió cada repartidor y cuánto debe entregar al regresar.
+
+Hito 3.1: Módulo de Monederos / Arqueo de Caja de Repartidores
+
+Crearemos una tabla llamada control_cajas_delivery.
+
+Regla de Negocio Automatizada: En el instante en que el Admin usa el endpoint admin/logistica/asignar para mandarle un pedido Contraentrega al Repartidor #4, el sistema sumará automáticamente el valor de ese pedido a la "deuda de caja" de ese repartidor.
+
+Hito 3.2: Endpoint de Liquidación en un Solo Clic
+
+Crearemos un endpoint para que, al final del día, el repartidor entregue el efectivo recolectado en la oficina y el Admin apruebe su caja con un solo clic, lo que marcará de forma masiva todos los pagos pendientes de esa ruta como aprobado
+
+🗺️ Hoja de Ruta: Consolidación de la API REST (Enfoque: Seguridad y Diseño)
+[Fase A: Blindaje JWT] ──> [Fase B: Diseño REST] ──> [Fase C: Infraestructura Segura]
+🔒 Fase A: Blindaje y Robustez de Seguridad (Corto Plazo)
+Antes de que cualquier Front-End se conecte, debemos asegurar que la API no tenga fisuras criptográficas.
+
+Expiración y Renovación de Tokens (Refresh Tokens): Actualmente, si un token JWT es interceptado, el atacante tiene acceso perpetuo hasta que cambies la clave. Debemos programar que el token expire en 15 minutos y crear un endpoint /auth/refresh para renovarlo automáticamente sin interrumpir al usuario.
+
+Manejo de Errores Estandarizado (No filtrar info): Si la base de datos falla, PHP suele escupir un Fatal Error con rutas de carpetas de tu PC (C:\xampp\...). Los atacantes usan esto para estudiar tu servidor. Debemos envolver los controladores en bloques try/catch globales para que ante cualquier fallo crítico la API responda elegantemente:
+
+JSON
+{ "status": "error", "message": "Ha ocurrido un problema interno en el servidor." }
+Protección contra Fuerza Bruta (Rate Limiting): Evitar que un script intente adivinar contraseñas en /auth/login enviando 1,000 peticiones por segundo. Implementaremos un contador rápido en la base de datos para bloquear IPs que superen las 5 peticiones fallidas por minuto.
+
+🎨 Fase B: Diseño de Arquitectura REST Profesional (Medio Plazo)
+Una API REST bien diseñada se explica sola, es limpia y es fácil de consumir por cualquier desarrollador Front-End.
+
+Uso Correcto de Verbos HTTP: Asegurarnos de limpiar los controladores de acciones en la URL. En REST no se usa POST /producto/modificar. Lo correcto es diseñar URLs semánticas utilizando el estándar de la industria:
+
+GET /productos (Listar)
+
+POST /productos (Crear)
+
+PUT /productos/{id} (Actualizar)
+
+DELETE /productos/{id} (Inactivar/Eliminar)
+
+Paginación Nativa en Endpoints de Listado: Modificar los métodos listarTodos() de tus modelos para que admitan los parámetros ?page=1&limit=15. Esto evita sobrecargar la memoria del servidor cuando manejes miles de registros de inventario o tracking.
+
+Políticas de CORS Estrictas: Configurar las cabeceras HTTP en tu index.php para especificar exactamente qué dominios tienen permitido hacer peticiones a tu API, bloqueando scripts maliciosos de origen desconocido.
+
+🌐 Fase C: Infraestructura y Despliegue Seguro (Lanzamiento del MVP)
+Preparar el entorno real donde vivirá tu API en la nube.
+
+Migración a Variables de Entorno (.env): Sacar las contraseñas de la base de datos y la clave secreta del JWT del código fuente. Si subes el código a GitHub con las claves expuestas, tu sistema estará comprometido. Usaremos un archivo .env que se quede estrictamente en el servidor de producción.
+
+Despliegue con HTTPS Obligatorio: Configurar un certificado SSL (puede ser gratuito con Let's Encrypt). Como tus tokens viajan en las cabeceras de cada petición, si no usas HTTPS, cualquier persona conectada a la misma red WiFi podría leer los tokens en texto plano.
+
+💡 Mi Sugerencia Final para el MVP
+Mantén este proyecto única y exclusivamente como la API REST. No le mezcles vistas HTML ni código de interfaz dentro de estas carpetas.
+
+Teniendo en cuenta que tu principal herramienta de trabajo es tu teléfono móvil, mi recomendación para la siguiente etapa es construir el Front-End como un proyecto totalmente separado utilizando tecnologías web responsivas modernas o frameworks híbridos, permitiéndote compilar una aplicación fluida para Android/iOS o una PWA (Progressive Web App) que puedas gestionar y editar directo desde tu dispositivo, consumiendo este backend blindado que acabamos de terminar.

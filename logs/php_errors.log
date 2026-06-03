@@ -1,0 +1,31 @@
+[03-Jun-2026 07:11:47 Europe/Berlin] 🚨 CRÍTICO [API LOGÍSTICA]: Call to undefined method Router::put() en C:\xampp\htdocs\ecommerce-logistica\config\routes.php línea 19
+[03-Jun-2026 07:12:03 Europe/Berlin] 🚨 CRÍTICO [API LOGÍSTICA]: Call to undefined method Router::put() en C:\xampp\htdocs\ecommerce-logistica\config\routes.php línea 19
+[03-Jun-2026 09:33:00 Europe/Berlin] 🚨 ERROR CRÍTICO [REGISTRO PRODUCTO]: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'foto_producto' in 'field list'
+[03-Jun-2026 09:33:40 Europe/Berlin] 🚨 ERROR CRÍTICO [REGISTRO PRODUCTO]: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'foto_producto' in 'field list'
+[03-Jun-2026 09:34:18 Europe/Berlin] 🚨 ERROR CRÍTICO [REGISTRO PRODUCTO]: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'foto_producto' in 'field list'
+[03-Jun-2026 09:35:05 Europe/Berlin] 🚨 ERROR CRÍTICO [REGISTRO PRODUCTO]: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'foto_producto' in 'field list'
+[03-Jun-2026 10:00:01 Europe/Berlin] Error en PagoController::informarPago -> SQLSTATE[42S22]: Column not found: 1054 Unknown column 'estado_aprobacion' in 'field list'
+[03-Jun-2026 12:35:35 Europe/Berlin] Error al asignar repartidor: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'id_repartidor' in 'field list'
+[03-Jun-2026 12:50:41 Europe/Berlin] Error al asignar repartidor: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'estado' in 'field list'
+[03-Jun-2026 12:57:02 Europe/Berlin] PHP Warning:  Trying to access array offset on value of type null in C:\xampp\htdocs\ecommerce-logistica\src\Controllers\PedidoController.php on line 35
+[03-Jun-2026 12:57:02 Europe/Berlin] Error al asignar repartidor: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'estado' in 'field list'
+[03-Jun-2026 12:59:02 Europe/Berlin] PHP Warning:  Trying to access array offset on value of type null in C:\xampp\htdocs\ecommerce-logistica\src\Controllers\PedidoController.php on line 35
+[03-Jun-2026 12:59:02 Europe/Berlin] Error al asignar repartidor: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'estado' in 'field list'
+[03-Jun-2026 13:00:54 Europe/Berlin] PHP Warning:  Trying to access array offset on value of type null in C:\xampp\htdocs\ecommerce-logistica\src\Controllers\PedidoController.php on line 35
+[03-Jun-2026 13:00:54 Europe/Berlin] Error al asignar repartidor: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'estado' in 'field list'
+[03-Jun-2026 13:10:17 Europe/Berlin] PHP Warning:  Trying to access array offset on value of type null in C:\xampp\htdocs\ecommerce-logistica\src\Controllers\PedidoController.php on line 22
+[03-Jun-2026 13:10:17 Europe/Berlin] Error en la transacción de despacho: SQLSTATE[42S02]: Base table or view not found: 1146 Table 'ecommerce_logistica_db.despacho' doesn't exist
+[03-Jun-2026 13:11:32 Europe/Berlin] PHP Warning:  Trying to access array offset on value of type null in C:\xampp\htdocs\ecommerce-logistica\src\Controllers\PedidoController.php on line 22
+[03-Jun-2026 13:11:32 Europe/Berlin] Error en la transacción de despacho: SQLSTATE[42S02]: Base table or view not found: 1146 Table 'ecommerce_logistica_db.despacho' doesn't exist
+[03-Jun-2026 13:11:36 Europe/Berlin] PHP Warning:  Trying to access array offset on value of type null in C:\xampp\htdocs\ecommerce-logistica\src\Controllers\PedidoController.php on line 22
+[03-Jun-2026 13:11:36 Europe/Berlin] Error en la transacción de despacho: SQLSTATE[42S02]: Base table or view not found: 1146 Table 'ecommerce_logistica_db.despacho' doesn't exist
+[03-Jun-2026 13:16:49 Europe/Berlin] PHP Warning:  Trying to access array offset on value of type null in C:\xampp\htdocs\ecommerce-logistica\src\Controllers\PedidoController.php on line 22
+[03-Jun-2026 13:16:49 Europe/Berlin] Error en la transacción de despacho: SQLSTATE[HY093]: Invalid parameter number
+[03-Jun-2026 13:17:50 Europe/Berlin] PHP Warning:  Trying to access array offset on value of type null in C:\xampp\htdocs\ecommerce-logistica\src\Controllers\PedidoController.php on line 22
+[03-Jun-2026 13:17:50 Europe/Berlin] Error en la transacción de despacho: SQLSTATE[HY093]: Invalid parameter number
+[03-Jun-2026 13:21:27 Europe/Berlin] PHP Warning:  Trying to access array offset on value of type null in C:\xampp\htdocs\ecommerce-logistica\src\Controllers\PedidoController.php on line 22
+[03-Jun-2026 13:21:27 Europe/Berlin] Error en la transacción de despacho: SQLSTATE[HY093]: Invalid parameter number
+[03-Jun-2026 13:28:24 Europe/Berlin] 🚨 ERROR EN TRANSACCIÓN DE DESPACHO SQL: SQLSTATE[42S02]: Base table or view not found: 1146 Table 'ecommerce_logistica_db.despacho' doesn't exist
+[03-Jun-2026 13:30:52 Europe/Berlin] 🚨 ERROR EN TRANSACCIÓN DE DESPACHO SQL: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'estado' in 'field list'
+[03-Jun-2026 13:40:50 Europe/Berlin] 🚨 ERROR EN TRANSACCIÓN DE DESPACHO SQL: SQLSTATE[42S02]: Base table or view not found: 1146 Table 'ecommerce_logistica_db.despacho' doesn't exist
+[03-Jun-2026 13:40:57 Europe/Berlin] 🚨 ERROR EN TRANSACCIÓN DE DESPACHO SQL: SQLSTATE[42S02]: Base table or view not found: 1146 Table 'ecommerce_logistica_db.despacho' doesn't exist

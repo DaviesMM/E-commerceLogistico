@@ -9,12 +9,20 @@ class Usuario {
      * Busca un usuario por su correo electrónico para el proceso de Login.
      * @param string $email
      * @return array|false Devuelve los datos del usuario o false si no existe.
-     */
+     */// NOTA: Este método devuelve el hash de la contraseña para que el controlador pueda verificarlo con password_verify()
+     // Dentro de src/Models/Usuario.php
+
+    public static function buscarPorId($id) {
+        $db = Database::conectar();
+        $stmt = $db->prepare("SELECT id_usuario, nombre, email, rol, foto_perfil, fecha_registro FROM usuarios WHERE id_usuario = :id");
+        $stmt->execute([':id' => $id]);
+        return $stmt->fetch(PDO::FETCH_ASSOC);
+    }
     public static function obtenerPorEmail($email) {
         try {
             $db = Database::conectar();
             // Traemos solo los usuarios activos
-            $sql = "SELECT id_usuario, nombre, email, password, rol, activo 
+            $sql = "SELECT id_usuario, nombre, email, password, rol, activo, foto_perfil 
                     FROM usuarios 
                     WHERE email = :email AND activo = 1 
                     LIMIT 1";
