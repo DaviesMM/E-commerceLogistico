@@ -23,6 +23,8 @@ $router->post('admin/pedidos/total', 'PedidoController@obtenerTotal'); // POST =
 $router->post('admin/pedidos/devolver-stock', 'PedidoController@devolver'); // POST = Devolver los productos de un pedido al stock general (Útil para cancelaciones)
 $router->post('admin/productos/actualizar-stock', 'ProductoController@actualizarStock'); // POST = Actualizar el stock de un producto específico (ej: después de una auditoría o corrección manual)
 $router->post('admin/productos/actualizar', 'ProductoController@actualizar');
+// Ruta para que el Admin supervise toda la logística de la calle
+$router->get('admin/pedidos/despachos', 'PedidoController@obtenerTodosLosDespachos');
 // Nota: Si tu router no soporta el método PUT nativo, puedes dejarlo como POST, 
 // pero la URL se mantiene limpia: 'admin/usuarios'
 
@@ -31,8 +33,6 @@ $router->get('admin/usuarios/detalle', 'UsuarioController@obtenerDetalle');
 $router->post('admin/productos/eliminar', 'ProductoController@eliminar');
 $router->post('admin/pedidos/asignar-repartidor', 'PedidoController@asignarRepartidor');
 
-// Ruta específica para la App Móvil o Interfaz del Motorizado en la calle
-$router->post('motorizado/pedidos/actualizar-estado', 'PedidoController@actualizarEstadoDesdeCalle');
 // =========================================================================
 // 📦 RECURSO: PRODUCTOS E INVENTARIO (`admin/productos`)
 // =========================================================================
@@ -58,7 +58,9 @@ $router->post('staff/picking/finalizar', 'LogisticaController@finalizarEmpaque')
 $router->post('admin/despachos', 'LogisticaController@asignarAdomiciliario');     // POST = Crear una asignación de ruta
 $router->get('delivery/despachos', 'LogisticaController@verMiHojaDeRuta');         // GET = Listar órdenes asignadas al motorizado
 $router->post('delivery/despachos/entregar', 'LogisticaController@registrarEntregaExitosa'); // POST = Confirmar entrega física
-
+$router->post('motorizado/pedidos/incidencia', 'PedidoController@registrarIncidenciaCalle');
+$router->post('motorizado/pedidos/actualizar-estado', 'PedidoController@actualizarEstadoDesdeCalle');
+$router->get('motorizado/pedidos/mi-ruta', 'PedidoController@obtenerMiHojaDeRuta');
 // =========================================================================
 // 💰 RECURSO: FINANZAS, CAJAS Y ARQUEOS (`/pagos` o `/cajas`)
 // =========================================================================
@@ -71,6 +73,7 @@ $router->post('admin/repartidores/liquidador', 'PagoController@liquidarCajaDeliv
 // 📊 RECURSO: AUDITORÍA DE SISTEMA (`admin/sistema`)
 // =========================================================================
 $router->get('admin/sistema/historial', 'UsuarioController@verAuditoriaSistema'); // GET = Ver logs globales del negocio
-
+$router->post('admin/caja/liquidar', 'PagoController@liquidarCajaDelivery'); // POST = Liquidar caja del repartidor (cambio de estado a 'liquidado' e inyección de fecha de arqueo)
+$router->get('admin/dashboard/kpis', 'DashboardController@obtenerMetricasPrincipales');
 // Retornamos el enrutador configurado profesionalmente
 return $router;

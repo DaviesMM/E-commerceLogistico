@@ -26,10 +26,10 @@ public function asignarRepartidor() {
         // buscamos llaves comunes o asignamos 1 (Admin) como respaldo seguro.
         $id_staff_empaque = 1; 
         if (is_array($usuarioLogueado)) {
-            $id_staff_empaque = $usuarioLogueado['id_usuario'] ?? $usuarioLogueado['usuario_id'] ?? 1;
+            $id_staff_empaque = $usuarioLogueado['id_usuario'] ?? $usuarioLogueado['id_usuario'] ?? 1;
         }
-        
-        $codigo_despacho = 'DESP-' . strtoupper(bin2hex(random_bytes(4)));
+        // El codigo de despacho se crea con un formato único: "DESP-" + el id del staff + 8 caracteres aleatorios + timestamp para evitar colisiones incluso en altas cargas de pedidos
+        $codigo_despacho = 'DESP-'. $id_staff_empaque. '-'. strtoupper(bin2hex(random_bytes(4))). '-' . time();
 
         if (!$id_pedido || !$id_delivery_repartidor) {
             http_response_code(400);
@@ -96,9 +96,12 @@ public function asignarRepartidor() {
     }
  }
  }
+// Dentro de src/Controllers/PedidoController.php
+
 public function actualizarEstadoDesdeCalle() {
-  /** @var array $usuarioLogueado */
-$usuarioLogueado = AuthMiddleware::autenticar(); // El motorizado autenticado desde su teléfono
+    // El motorizado se identifica ante la API con su propio Token JWT
+    /** @var array $usuarioLogueado */
+    $usuarioLogueado = AuthMiddleware::autenticar(); 
 
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $id_pedido    = filter_input(INPUT_POST, 'id_pedido', FILTER_VALIDATE_INT);
@@ -109,62 +112,85 @@ $usuarioLogueado = AuthMiddleware::autenticar(); // El motorizado autenticado de
             echo json_encode(["status" => "error", "message" => "Datos de actualización de entrega insuficientes."]);
             return;
         }
-    
+
+        $db = Database::conectar();
+
         try {
-            $db = Database::conectar();
-            
+            $db->beginTransaction();
+
+            // 1. 🛡️ ESCUDO DE SEGURIDAD: Validar que el pedido realmente esté asignado a ESTE repartidor en la tabla despacho
             $sqlCheck = "SELECT id_pedido FROM despachos WHERE id_pedido = :id_ped AND id_delivery_repartidor = :id_rep";
             $stmtCheck = $db->prepare($sqlCheck);
-            $stmtCheck->execute([':id_ped' => $id_pedido, ':id_rep' => $usuarioLogueado['usuario_id']]);
+            $stmtCheck->execute([
+                ':id_ped' => $id_pedido, 
+                ':id_rep' => $usuarioLogueado['id_usuario'] ?? $usuarioLogueado['id_usuario']
+            ]);
             
             if (!$stmtCheck->fetch()) {
                 http_response_code(403); // Forbidden
-                echo json_encode(["status" => "error", "message" => "Acceso denegado. Este pedido no está asignado a tu hoja de ruta."]);
+                echo json_encode(["status" => "error", "message" => "Acceso denegado. Este pedido no pertenece a tu hoja de ruta."]);
                 return;
             }
 
-            // Si pasa el escudo, actualizamos el estado físico de la entrega
-            $sql = "UPDATE pedidos SET estado = :estado WHERE id_pedido = :id_ped";
-            $stmt = $db->prepare($sql);
-            $stmt->execute([':estado' => $nuevo_estado, ':id_ped' => $id_pedido]);
+            // 2. Capturar el estado anterior del pedido madre para la bitácora de tracking
+            $sqlOld = "SELECT estado_pedido, tipo_pago, total FROM pedidos WHERE id_pedido = :id_ped FOR UPDATE";
+            $stmtOld = $db->prepare($sqlOld);
+            $stmtOld->execute([':id_ped' => $id_pedido]);
+            $pedidoInfo = $stmtOld->fetch(PDO::FETCH_ASSOC);
+
+            $estado_anterior = $pedidoInfo ? $pedidoInfo['estado_pedido'] : 'en_camino';
+
+            // 3. Actualizar el estado físico en la tabla pedidos madre
+            $sqlUpdate = "UPDATE pedidos SET estado_pedido = :estado, fecha_actualizacion = NOW() WHERE id_pedido = :id_ped";
+            $stmtUpdate = $db->prepare($sqlUpdate);
+            $stmtUpdate->execute([':estado' => $nuevo_estado, ':id_ped' => $id_pedido]);
+
+            // 4. Actualizar la hoja de despacho con la fecha de finalización
             if ($nuevo_estado === 'entregado') {
-                // 1. Averiguamos el método de pago y el total del pedido actual
-                $sqlPedidoInfo = "SELECT metodo_pago, total FROM pedidos WHERE id_pedido = :id_ped";
-                $stmtInfo = $db->prepare($sqlPedidoInfo);
-                $stmtInfo->execute([':id_ped' => $id_pedido]);
-                $infoPedido = $stmtInfo->fetch(PDO::FETCH_ASSOC);
-
-                // 2. Si el pago se realizó en EFECTIVO en la calle, se lo cargamos a su control de caja
-                if ($infoPedido && $infoPedido['metodo_pago'] === 'efectivo') {
-                    $monto_recibido = $infoPedido['total'];
-
-                    // Insertamos en la tabla de control de caja para auditoría de finanzas
-                    $sqlCaja = "INSERT INTO control_caja_delivery (id_repartidor, id_pedido, monto_recibido, estado_liquidacion, fecha_registro) 
-                                VALUES (:id_rep, :id_ped, :monto, 'pendiente', NOW())";
-                    $stmtCaja = $db->prepare($sqlCaja);
-                    $stmtCaja->execute([
-                        ':id_rep' => $usuarioLogueado['usuario_id'],
-                        ':id_ped' => $id_pedido,
-                        ':monto'  => $monto_recibido
-                    ]);
-                }
+                $sqlDesp = "UPDATE despachos SET fecha_entrega = NOW() WHERE id_pedido = :id_ped";
+                $db->prepare($sqlDesp)->execute([':id_ped' => $id_pedido]);
             }
-            Historial::registrar($usuarioLogueado['usuario_id'], 'Reparto', 'Actualizar', "Repartidor marcó el pedido #{$id_pedido} como '{$nuevo_estado}'");
-            $descripcionTracking = ($nuevo_estado === 'entregado') ? 'Pedido entregado con éxito al cliente.' : 'Intento de entrega fallido.';
-            Pedido::registrarTracking($id_pedido, $nuevo_estado, $descripcionTracking, $usuarioLogueado['usuario_id']);
+
+            // 5. 📊 HISTORIAL DE TRACKING: Guardamos el cambio en la tabla que corregimos
+            Pedido::registrarTracking($id_pedido, $estado_anterior, $nuevo_estado, $usuarioLogueado['id_usuario'] ?? $usuarioLogueado['id_usuario']);
+
+            // 6. 💰 CONTROL DE CAJA DELIVERY: Si es efectivo, cargamos la responsabilidad fiscal al motorizado
+            if ($nuevo_estado === 'entregado' && $pedidoInfo && strtolower($pedidoInfo['tipo_pago']) === 'efectivo') {
+                
+                // Estructura estándar para control_caja_delivery
+                $sqlCaja = "INSERT INTO control_cajas_delivery (id_usuario_delivery, id_pedido, monto_recaudar, estado_cobro, fecha_asignacion) 
+                                                                 VALUES (:id_rep, :id_ped, :monto, 'pendiente', NOW())";
+                $stmtCaja = $db->prepare($sqlCaja);
+                $stmtCaja->execute([
+                    ':id_rep' => $usuarioLogueado['id_usuario'] ?? $usuarioLogueado['id_usuario'],
+                    ':id_ped' => $id_pedido,
+                    ':monto'  => $pedidoInfo['total']
+                ]);
+            }
+
+            $db->commit();
+
+            Historial::registrar($usuarioLogueado['id_usuario'] ?? $usuarioLogueado['id_usuario'], 'Reparto', 'Actualizar', "Repartidor marcó pedido #{$id_pedido} como '{$nuevo_estado}'");
+
             http_response_code(200);
-            echo json_encode(["status" => "success", "message" => "Entrega registrada en el centro de control logístico."]);
+            echo json_encode([
+                "status" => "success", 
+                "message" => "Estado de entrega sincronizado correctamente.",
+                "flujo_caja" => ($pedidoInfo && strtolower($pedidoInfo['tipo_pago']) === 'efectivo') ? "Monto cargado a caja chica del repartidor." : "Pago previamente validado por transferencia."
+            ]);
+
         } catch (PDOException $e) {
-            error_log("Error en entrega de calle: " . $e->getMessage());
+            if ($db->inTransaction()) $db->rollBack();
+            error_log("🚨 ERROR EN ENTREGA DESDE LA CALLE: " . $e->getMessage());
             http_response_code(500);
-            echo json_encode(["status" => "error", "message" => "Error interno al liquidar la entrega."]);
+            echo json_encode(["status" => "error", "message" => "Error interno al liquidar la entrega en calle."]);
         }
     }
-    }    
+}  
     /**
      * Recibe la orden de compra desde la web/app del cliente (PÚBLICO)
      */
-    public function procesarOrden() {
+ public function procesarOrden() {
         if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             
             $nombre    = filter_input(INPUT_POST, 'cliente_nombre', FILTER_DEFAULT);
@@ -264,7 +290,8 @@ $usuarioLogueado = AuthMiddleware::autenticar(); // El motorizado autenticado de
     }
     // Dentro de src/Controllers/PedidoController.php
 
-public function actualizarEstado() {
+
+    public function actualizarEstado() {
    /** @var array $usuarioLogueado */
 $usuarioLogueado = AuthMiddleware::autenticar();
 
@@ -281,7 +308,7 @@ $usuarioLogueado = AuthMiddleware::autenticar();
         $exito = Pedido::cambiarEstado($id_pedido, $nuevo_estado);
 
         if ($exito) {
-            Historial::registrar($usuarioLogueado['usuario_id'], 'Pedidos', 'Editar', "Cambió el estado del pedido #{$id_pedido} a '{$nuevo_estado}'");
+            Historial::registrar($usuarioLogueado['id_usuario'], 'Pedidos', 'Editar', "Cambió el estado del pedido #{$id_pedido} a '{$nuevo_estado}'");
             http_response_code(200);
             echo json_encode(["status" => "success", "message" => "Estado del pedido actualizado con éxito."]);
         } else {
@@ -340,9 +367,9 @@ $usuarioLogueado = AuthMiddleware::autenticar();
             $exito = Pedido::reversarProductosAlStock($id_pedido, $db);
 
             if ($exito) {
-                Pedido::registrarTracking($id_pedido, 'cancelado', 'El pedido fue cancelado por el administrador e inventario devuelto.', $usuarioLogueado['usuario_id']);
+                Pedido::registrarTracking($id_pedido, 'cancelado', 'El pedido fue cancelado por el administrador e inventario devuelto.', $usuarioLogueado['id_usuario']);
                 $db->commit();
-                Historial::registrar($usuarioLogueado['usuario_id'], 'Inventario', 'Reversar', "Devolvió al stock general los productos del pedido #{$id_pedido}");
+                Historial::registrar($usuarioLogueado['id_usuario'], 'Inventario', 'Reversar', "Devolvió al stock general los productos del pedido #{$id_pedido}");
                 http_response_code(200);
                 echo json_encode(["status" => "success", "message" => "Productos devueltos al inventario correctamente."]);
             } else {
@@ -407,10 +434,10 @@ $usuarioLogueado = AuthMiddleware::autenticar();
                 ]);
             }
             Pedido::registrarTracking($id_pedido, 'cancelado', 'El pedido fue cancelado por el administrador
-             e inventario devuelto.', $usuarioLogueado['usuario_id']);
+             e inventario devuelto.', $usuarioLogueado['id_usuario']);
             $db->commit();
 
-            Historial::registrar($usuarioLogueado['usuario_id'], 'Pedidos', 'Cancelar', "Canceló el pedido ID: {$id_pedido} y reversó stock.");
+            Historial::registrar($usuarioLogueado['id_usuario'], 'Pedidos', 'Cancelar', "Canceló el pedido ID: {$id_pedido} y reversó stock.");
 
             http_response_code(200);
             echo json_encode(["status" => "success", "message" => "Pedido cancelado con éxito. Inventario restaurado."]);
@@ -484,6 +511,216 @@ $usuarioLogueado = AuthMiddleware::autenticar();
                     echo json_encode(["status" => "error", "message" => "Error al preparar el entorno de edición."]);
                 }
                 break;
+        }
+    }
+    // obtener la hoja de ruta
+
+public function obtenerMiHojaDeRuta() {
+    // El middleware identifica al motorizado de forma segura por su token
+    /** @var array $usuarioLogueado */
+    $usuarioLogueado = AuthMiddleware::autenticar(); 
+
+    if ($_SERVER['REQUEST_METHOD'] === 'GET') {
+        $id_repartidor = $usuarioLogueado['id_usuario'] ?? $usuarioLogueado['id_usuario'];
+
+        try {
+            $db = Database::conectar();
+            
+            // Hacemos un JOIN entre despacho y pedidos para traer la información completa de su ruta
+            $sql = "SELECT 
+                        d.codigo_despacho,
+                        d.fecha_despacho,
+                        p.id_pedido,
+                        p.cliente_nombre,
+                        p.cliente_telefono,
+                        p.cliente_direccion,
+                        p.ciudad_municipio,
+                        p.tipo_pago,
+                        p.estado_pedido,
+                        p.total
+                    FROM despachos d
+                    INNER JOIN pedidos p ON d.id_pedido = p.id_pedido
+                    WHERE d.id_delivery_repartidor = :id_rep 
+                      AND p.estado_pedido = 'en_camino'
+                    ORDER BY d.fecha_despacho DESC";
+
+            $stmt = $db->prepare($sql);
+            $stmt->execute([':id_rep' => $id_repartidor]);
+            $listaPedidos = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+            http_response_code(200);
+            echo json_encode([
+                "status" => "success",
+                "repartidor_id" => $id_repartidor,
+                "total_pedidos" => count($listaPedidos),
+                "data" => $listaPedidos
+            ]);
+
+        } catch (PDOException $e) {
+            error_log("🚨 ERROR AL CONSULTAR HOJA DE RUTA: " . $e->getMessage());
+            http_response_code(500);
+            echo json_encode(["status" => "error", "message" => "Error interno al obtener la hoja de ruta."]);
+        }
+    }
+}
+
+
+public function obtenerTodosLosDespachos() {
+    // 🛡️ Asegura que solo el personal administrativo con token válido acceda
+/** @var array $usuarioLogueado  */
+    $usuarioLogueado = AuthMiddleware::autenticar(); 
+
+    if ($_SERVER['REQUEST_METHOD'] === 'GET') {
+        try {
+            $db = Database::conectar();
+            
+            // Traemos el reporte completo: Datos del despacho, del pedido, del cliente,
+            // el nombre del staff que empacó y el nombre del repartidor asignado.
+            $sql = "SELECT 
+                        d.id_despacho,
+                        d.codigo_despacho,
+                        d.fecha_despacho,
+                        d.fecha_entrega,
+                        p.id_pedido,
+                        p.cliente_nombre,
+                        p.cliente_direccion,
+                        p.total,
+                        p.estado_pedido,
+                        p.tipo_pago,
+                        u_staff.nombre AS empacado_por,
+                        u_rep.nombre AS repartidor_asignado,
+                        u_rep.id_usuario AS repartidor_id
+                    FROM despachos d
+                    INNER JOIN pedidos p ON d.id_pedido = p.id_pedido
+                    INNER JOIN usuarios u_staff ON d.id_staff_empaque = u_staff.id_usuario
+                    INNER JOIN usuarios u_rep ON d.id_delivery_repartidor = u_rep.id_usuario
+                    ORDER BY d.fecha_despacho DESC";
+
+            $stmt = $db->prepare($sql);
+            $stmt->execute();
+            $reporteLogistico = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+            http_response_code(200);
+            echo json_encode([
+                "status" => "success",
+                "total_despachados" => count($reporteLogistico),
+                "data" => $reporteLogistico
+            ]);
+
+        } catch (PDOException $e) {
+            error_log("🚨 ERROR EN MONITOREO DE DESPACHOS: " . $e->getMessage());
+            http_response_code(500);
+            echo json_encode(["status" => "error", "message" => "Error interno al obtener el control de despachos."]);
+        }
+    }
+}
+public function registrarIncidenciaCalle() {
+    /** @var array $usuarioLogueado  */
+    $usuarioLogueado = AuthMiddleware::autenticar(); // El repartidor
+
+    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+        $id_pedido = filter_input(INPUT_POST, 'id_pedido', FILTER_VALIDATE_INT);
+        $motivo    = filter_input(INPUT_POST, 'motivo', FILTER_DEFAULT); // Ej: "Cliente no se encontraba"
+
+        if (!$id_pedido || empty($motivo)) {
+            http_response_code(400);
+            echo json_encode(["status" => "error", "message" => "ID de pedido y motivo de la incidencia requeridos."]);
+            return;
+        }
+
+        $db = Database::conectar();
+        try {
+            $db->beginTransaction();
+
+            // 1. Obtener el estado anterior
+            $sqlOld = "SELECT estado_pedido FROM pedidos WHERE id_pedido = :id_ped";
+            $stmtOld = $db->prepare($sqlOld);
+            $stmtOld->execute([':id_ped' => $id_pedido]);
+            $res = $stmtOld->fetch(PDO::FETCH_ASSOC);
+            $estado_anterior = $res ? $res['estado_pedido'] : 'en_camino';
+
+            // 2. Cambiar el estado del pedido a 'novedad' o 'retornado_oficina'
+            $sqlUp = "UPDATE pedidos SET estado_pedido = 'novedad_calle', fecha_actualizacion = NOW() WHERE id_pedido = :id_ped";
+            $db->prepare($sqlUp)->execute([':id_ped' => $id_pedido]);
+
+            // 3. Registrar el tracking detallado con el motivo real escrito por el repartidor
+            Pedido::registrarTracking($id_pedido, $estado_anterior, 'novedad_calle', $usuarioLogueado['id_usuario'] ?? $usuarioLogueado['id_usuario']);
+
+            $db->commit();
+
+            http_response_code(200);
+            echo json_encode([
+                "status" => "success",
+                "message" => "Novedad registrada. El pedido regresará a la oficina de control."
+            ]);
+
+        } catch (PDOException $e) {
+            if ($db->inTransaction()) $db->rollBack();
+            error_log("🚨 Error al registrar novedad: " . $e->getMessage());
+            http_response_code(500);
+            echo json_encode(["status" => "error", "message" => "Error interno al procesar la incidencia."]);
+        }
+    }
+}
+public function liquidarCajaRepartidor() {
+    /** @var array $usuarioLogueado  */
+        $usuarioLogueado = AuthMiddleware::autenticar(); // Admin / Staff de cuentas
+
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            $id_repartidor = filter_input(INPUT_POST, 'id_repartidor', FILTER_VALIDATE_INT);
+            
+            if (!$id_repartidor) {
+                http_response_code(400);
+                echo json_encode(["status" => "error", "message" => "ID del repartidor requerido para la liquidación."]);
+                return;
+            }
+
+            $db = Database::conectar();
+            try {
+                $db->beginTransaction();
+
+                // 1. Calcular cuánto dinero tiene pendiente este repartidor en la calle
+                $sqlTotal = "SELECT SUM(monto_recibido) as total_pendiente 
+                             FROM control_caja_delivery 
+                             WHERE id_repartidor = :id_rep AND estado_liquidacion = 'pendiente'";
+                $stmtTotal = $db->prepare($sqlTotal);
+                $stmtTotal->execute([':id_rep' => $id_repartidor]);
+                $resultado = $stmtTotal->fetch(PDO::FETCH_ASSOC);
+
+                $monto_a_liquidar = $resultado['total_pendiente'] ?? 0;
+
+                if ($monto_a_liquidar <= 0) {
+                    throw new Exception("El repartidor no tiene dinero en efectivo pendiente por entregar.", 400);
+                }
+
+                // 2. Cambiar el estado a 'liquidado' para cerrar su deuda
+                $sqlClear = "UPDATE control_caja_delivery 
+                             SET estado_liquidacion = 'liquidado', fecha_registro = NOW() 
+                             WHERE id_repartidor = :id_rep AND estado_liquidacion = 'pendiente'";
+                $db->prepare($sqlClear)->execute([':id_rep' => $id_repartidor]);
+
+                $db->commit();
+
+                // Registrar en la bitácora global
+                Historial::registrar(
+                    $usuarioLogueado['id_usuario'] ?? $usuarioLogueado['usuario_id'], 
+                    'Finanzas', 
+                    'Liquidar', 
+                    "Liquidó la caja del repartidor ID {$id_repartidor}. Recibió: ${monto_a_liquidar}"
+                );
+
+                http_response_code(200);
+                echo json_encode([
+                    "status" => "success",
+                    "message" => "Caja liquidada con éxito.",
+                    "monto_recibido_oficina" => floatval($monto_a_liquidar)
+                ]);
+
+            } catch (Exception $e) {
+                if ($db->inTransaction()) $db->rollBack();
+                http_response_code($e->getCode() >= 400 ? $e->getCode() : 500);
+                echo json_encode(["status" => "error", "message" => $e->getMessage()]);
+            }
         }
     }
 }

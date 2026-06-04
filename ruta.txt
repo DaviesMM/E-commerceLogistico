@@ -163,3 +163,152 @@ Despliegue con HTTPS Obligatorio: Configurar un certificado SSL (puede ser gratu
 Mantén este proyecto única y exclusivamente como la API REST. No le mezcles vistas HTML ni código de interfaz dentro de estas carpetas.
 
 Teniendo en cuenta que tu principal herramienta de trabajo es tu teléfono móvil, mi recomendación para la siguiente etapa es construir el Front-End como un proyecto totalmente separado utilizando tecnologías web responsivas modernas o frameworks híbridos, permitiéndote compilar una aplicación fluida para Android/iOS o una PWA (Progressive Web App) que puedas gestionar y editar directo desde tu dispositivo, consumiendo este backend blindado que acabamos de terminar.
+
+
+🗺️ Diagrama de Flujo General del Sistema Logístico
+[ FASE 1: CLIENTE ]       ➔       [ FASE 2: BODEGA / OFICINA ]       ➔       [ FASE 3: CALLE / REPARTO ]       ➔       [ FASE 4: FINANZAS ]
+Compra, Datos y Envío             Validación, Empaque y Despacho             Ruta, Entrega o Incidencia                Arqueo y Liquidación
+🔄 El Flujo Paso a Paso (Sin saltar ningún detalle)
+🛒 FASE 1: La Creación del Pedido (Perspectiva del Cliente)
+Todo inicia en la interfaz pública del catálogo de productos.
+
+Selección en Catálogo: El cliente selecciona productos. El Frontend calcula los totales.
+
+Formulario de Checkout: El cliente llena sus datos: cliente_nombre, cliente_telefono, cliente_direccion, ciudad_municipio y seguro_embalaje.
+
+Selección del Método de Pago: El cliente elige entre Línea (Digital) o Contraentrega (Efectivo).
+
+Disparo al Backend (POST /pedidos):
+
+Se inserta el registro en la tabla pedidos con estado_pedido = 'pendiente'.
+
+Se insertan los productos en la tabla intermedia (ej: pedido_detalles).
+
+MySQL Trigger / Lógica: Se resta el stock en la tabla productos.
+
+📦 FASE 2: Preparación y Asignación Logística (Perspectiva de Oficina / Staff)
+El pedido ya aparece en el panel de administración.
+
+                  ┌─────────────────────────────────────────┐
+                  │ El Admin ve el pedido en 'pendiente'    │
+                  └────────────────────┬────────────────────┘
+                                       │
+                         [ ¿Se validaron los datos/pago? ]
+                                       │
+                      ┌────────────────┴────────────────┐
+                      ▼ SI                              ▼ NO
+         ┌───────────────────────────┐             ┌───────────────┐
+         │ Cambia a 'pago_pendiente' │             │  Cancelado    │
+         │ o 'listo_empaque'         │             └───────────────┘
+         └────────────┬──────────────┘
+                      │
+                      ▼
+ ┌───────────────────────────────────────────┐
+ │ Se ejecuta POST admin/pedidos/asignar      │
+ ├───────────────────────────────────────────┤
+ │ 1. UPDATE pedidos -> 'en_camino'          │
+ │ 2. INSERT despacho (Código Guía Único)    │
+ │ 3. INSERT pedido_tracking (Historial)     │
+ └───────────────────────────────────────────┘
+Revisión del Staff: El administrador valida que los datos de envío sean coherentes.
+
+Empaque Físico: El personal de bodega empaqueta la mercancía en cajas.
+
+Despacho Oficial (POST admin/pedidos/asignar-repartidor):
+
+Controlador: PedidoController@asignarRepartidor
+
+Acción en Base de Datos:
+
+UPDATE pedidos SET estado_pedido = 'en_camino'.
+
+INSERT INTO despacho guardando id_pedido, codigo_despacho (Guía generada automática), id_staff_empaque (quién lo armó) e id_delivery_repartidor (ID del chofer asignado).
+
+INSERT INTO pedido_tracking guardando estado_anterior = 'pendiente' y estado_nuevo = 'en_camino'.
+
+🛵 FASE 3: La Ruta de Distribución (Perspectiva del Repartidor en Calle)
+El motorizado inicia sesión en su aplicación móvil.
+
+Consulta de Carga (GET motorizado/pedidos/mi-ruta):
+
+El repartidor solicita su hoja de ruta. El backend valida su token JWT, extrae su ID de usuario y hace un INNER JOIN entre despacho y pedidos buscando únicamente registros donde id_delivery_repartidor = :id y estado_pedido = 'en_camino'.
+
+El Repartidor llega al Destino: Aquí el flujo se bifurca en la vida real según lo que suceda en la calle:
+
+                                  [ ¿Se pudo entregar el paquete? ]
+                                                  │
+                             ┌────────────────────┴────────────────────┐
+                             ▼ SI                                      ▼ NO
+               ┌──────────────────────────────┐          ┌──────────────────────────────┐
+               │ POST actualizar-estado       │          │ POST incidencia              │
+               ├──────────────────────────────┤          ├──────────────────────────────┤
+               │ • UPDATE pedidos: 'entregado'│          │ • UPDATE pedidos:            │
+               │ • UPDATE despacho: fecha_ent │          │   'novedad_calle'            │
+               │ • Tracking: en_camino -> ent │          │ • Tracking: en_camino -> nov │
+               └─────────────┬────────────────┘          └──────────────┬───────────────┘
+                             │                                          │
+                  [ ¿El pago es Efectivo? ]                             ▼
+                             │                                 El paquete regresa a 
+                      ┌──────┴──────┐                          bodega física para reintento.
+                      ▼ SI          ▼ NO
+        ┌────────────────────────┐  Ya cobrado en línea.
+        │ INSERT control_cajas   │  Flujo directo a éxito.
+        │ estado_cobro='pendiente│
+        └────────────────────────┘
+Escenario A: Entrega Exitosa (POST motorizado/pedidos/actualizar-estado):
+
+El backend activa el escudo de seguridad: Valida que el pedido pertenezca a la hoja de ruta de ese token.
+
+UPDATE pedidos SET estado_pedido = 'entregado'.
+
+UPDATE despacho SET fecha_entrega = NOW().
+
+INSERT INTO pedido_tracking (en_camino ➔ entregado).
+
+Filtro Financiero Crítico:
+
+Si tipo_pago = 'linea': El flujo termina aquí con éxito.
+
+Si tipo_pago = 'contraentrega' (Efectivo): El sistema genera un cobro coactivo: INSERT INTO control_cajas_delivery guardando el id_pedido, el id_usuario_delivery, el monto_recaudar y el estado_cobro = 'pendiente'. El motorizado tiene el dinero en custodia física.
+
+Escenario B: Fallo en Calle / Incidencia (POST motorizado/pedidos/incidencia):
+
+El repartidor reporta un problema (ej: "Dirección incorrecta").
+
+UPDATE pedidos SET estado_pedido = 'novedad_calle'.
+
+INSERT INTO pedido_tracking (en_camino ➔ novedad_calle) guardando el motivo. El paquete regresa físicamente a la bodega y queda libre de deudas financieras de caja chica.
+
+💰 FASE 4: Cierre Diario y Arqueo (Perspectiva de Administración / Finanzas)
+El repartidor regresa a la base central al finalizar su jornada.
+
+Lectura del Administrador (GET admin/dashboard/kpis):
+
+El administrador abre su panel. El controlador DashboardController ejecuta un SUM(monto_recaudar) FROM control_cajas_delivery WHERE estado_cobro = 'pendiente' y le avisa exactamente cuántos miles de pesos tienen los repartidores en sus bolsillos en ese instante.
+
+Arqueo e Ingesta de Dinero (POST admin/caja/liquidar):
+
+Controlador: PagoController@liquidarCajaDelivery
+
+El repartidor entrega los billetes en la ventanilla de oficina. El administrador ingresa el id_pedido en el sistema.
+
+Acción en Base de Datos:
+
+UPDATE control_cajas_delivery SET estado_cobro = 'liquidado', fecha_liquidacion = NOW() WHERE id_pedido = :id.
+
+Se aprueba el pago madre: Pago::cambiarEstadoPago($idPedido, 'aprobado').
+
+El pedido pasa a su estado contable definitivo: Pedido::actualizarEstado($idPedido, 'pago_confirmado').
+
+Historial::registrar() guarda una bitácora indestructible de qué administrador recibió el dinero.
+
+
+ideas 
+
+Es completamente normal que al conectar las pantallas del Front-end aparezcan esos "cabos sueltos" o detalles de experiencia de usuario (UX). Por ejemplo, cosas geniales que podrás añadirle en el futuro para hacerlo aún más escalable:
+
+Geolocalización: Guardar las coordenadas latitud/longitud en la tabla pedido_tracking cuando el motorizado use su teléfono para marcar una incidencia, para saber dónde ocurrió el problema.
+
+Historial de Stock: Una tabla que registre por qué bajó o subió el inventario (si fue por una venta, por una devolución de una incidencia de calle, o por reabastecimiento).
+
+Notificaciones automatizadas: Disparar un correo o un webhook a WhatsApp justo en el momento en que el estado pasa a en_camino para enviarle al cliente su código de guía (DESP-XXXXXX).

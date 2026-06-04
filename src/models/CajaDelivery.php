@@ -47,21 +47,24 @@ class CajaDelivery {
     /**
      * Liquida de forma masiva o individual los pedidos recolectados por el repartidor al entregar el efectivo
      */
-    public static function liquidarEfectivoPedido($idPedido, $nuevoEstado) {
-        try {
-            $db = Database::conectar();
-            $sql = "UPDATE control_cajas_delivery 
-                    SET estado_cobro = :estado 
-                    WHERE id_pedido = :id_pedido AND estado_cobro = 'en_calle'";
-            
-            $stmt = $db->prepare($sql);
-            return $stmt->execute([
-                ':estado'    => $nuevoEstado, // 'entregado_oficina' o 'novedad_devolucion'
-                ':id_pedido' => $idPedido
-            ]);
-        } catch (PDOException $e) {
-            error_log("Error en CajaDelivery::liquidarEfectivoPedido -> " . $e->getMessage());
-            return false;
-        }
+   public static function liquidarEfectivoPedido($idPedido, $nuevoEstado = 'liquidado') {
+        $db = Database::conectar();
+        
+        // 🔥 ALINEADO A TUS CAMPOS: control_cajas_delivery, estado_cobro, fecha_liquidacion, id_pedido
+        // Cambia el estado de 'pendiente' a 'liquidado' e inyecta la hora actual del arqueo
+        $sql = "UPDATE control_cajas_delivery 
+                SET estado_cobro = :estado, 
+                    fecha_liquidacion = NOW() 
+                WHERE id_pedido = :id_ped 
+                  AND estado_cobro = 'pendiente'";
+                  
+        $stmt = $db->prepare($sql);
+        $stmt->execute([
+            ':estado' => $nuevoEstado,
+            ':id_ped' => $idPedido
+        ]);
+        
+        // rowCount() devolverá true (1) si el pedido existía en la tabla de cajas y estaba pendiente
+        return $stmt->rowCount() > 0;
     }
 }

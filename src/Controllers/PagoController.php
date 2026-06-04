@@ -154,50 +154,50 @@ public function informarPago() {
     /**
      * [ADMIN] Liquidar caja: El repartidor entrega el dinero físico y el Admin aprueba de un solo golpe
      */
-    public function liquidarCajaDelivery() {
-        AuthMiddleware::autenticar();
-        $usuario = $GLOBALS['usuario_autenticado'];
+   public function liquidarCajaDelivery() {
+    AuthMiddleware::autenticar();
+    $usuario = $GLOBALS['usuario_autenticado'];
 
-        if ($usuario['usuario_rol'] !== 'admin') {
-            http_response_code(403);
-            echo json_encode(["status" => "error", "message" => "Acceso denegado."]);
+    if ($usuario['usuario_rol'] !== 'admin') {
+        http_response_code(403);
+        echo json_encode(["status" => "error", "message" => "Acceso denegado."]);
+        return;
+    }
+
+    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+        $idPedido = filter_input(INPUT_POST, 'id_pedido', FILTER_VALIDATE_INT);
+
+        if (!$idPedido) {
+            http_response_code(400);
+            echo json_encode(["status" => "error", "message" => "ID de pedido requerido para liquidar."]);
             return;
         }
 
-        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-            $idPedido = filter_input(INPUT_POST, 'id_pedido', FILTER_VALIDATE_INT);
+        require_once __DIR__ . '/../Models/CajaDelivery.php';
+        
+        // 1. 🔥 Llamamos al modelo. Pasamos el ID del pedido y tu estado de cobro real 'liquidado'
+        $exitoCaja = CajaDelivery::liquidarEfectivoPedido($idPedido, 'liquidado');
 
-            if (!$idPedido) {
-                http_response_code(400);
-                echo json_encode(["status" => "error", "message" => "ID de pedido requerido para liquidar."]);
-                return;
-            }
+        if ($exitoCaja) {
+            // 2. Automáticamente aprobamos el pago y confirmamos la orden completa
+            Pago::cambiarEstadoPago($idPedido, 'aprobado');
+            Pedido::actualizarEstado($idPedido, 'pago_confirmado');
 
-            require_once __DIR__ . '/../Models/CajaDelivery.php';
-            
-            // 1. Cambiamos el estado en el control de cajas de la empresa
-            $exitoCaja = CajaDelivery::liquidarEfectivoPedido($idPedido, 'entregado_oficina');
+            Historial::registrar(
+                $usuario['usuario_id'],
+                'Finanzas',
+                'Arqueo',
+                "Liquido efectivo en oficina para el Pedido #{$idPedido}. Caja cuadrada."
+            );
 
-            if ($exitoCaja) {
-                // 2. Automáticamente aprobamos el pago y confirmamos la orden completa
-                Pago::cambiarEstadoPago($idPedido, 'aprobado');
-                Pedido::actualizarEstado($idPedido, 'pago_confirmado');
-
-                Historial::registrar(
-                    $usuario['usuario_id'],
-                    'Finanzas',
-                    'Arqueo',
-                    "Liquido efectivo en oficina para el Pedido #{$idPedido}. Caja cuadrada."
-                );
-
-                echo json_encode([
-                    "status" => "success",
-                    "message" => "¡Arqueo exitoso! El dinero del Pedido #{$idPedido} ha ingresado a la caja central y el estado se actualizó a pago_confirmado."
-                ]);
-            } else {
-                http_response_code(500);
-                echo json_encode(["status" => "error", "message" => "El pedido no está en calle o ya fue liquidado."]);
-            }
+            echo json_encode([
+                "status" => "success",
+                "message" => "¡Arqueo exitoso! El dinero del Pedido #{$idPedido} ha ingresado a la caja central y el estado se actualizó a pago_confirmado."
+            ]);
+        } else {
+            http_response_code(500);
+            echo json_encode(["status" => "error", "message" => "El pedido no está en calle o ya fue liquidado."]);
         }
     }
+ }
 }
