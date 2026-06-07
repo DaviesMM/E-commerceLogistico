@@ -7,6 +7,7 @@ $router = new Router();
 // =========================================================================
 // 🔐 RECURSO: AUTENTICACIÓN (`/auth`)
 // =========================================================================
+
 $router->post('auth/login', 'AuthController@login');        // Enviar credenciales
 $router->post('auth/logout', 'AuthController@logout');      // Destruir sesión/token
 $router->post('auth/refresh', 'AuthController@refresh');    // Renovar Access Token (JWT)

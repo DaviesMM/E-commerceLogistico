@@ -8,8 +8,6 @@ ini_set('error_log', __DIR__ . '/../logs/php_errors.log');
 
 // 2. Cabecera global para respuestas JSON
 header("Content-Type: application/json; charset=UTF-8");
-
-// 🔥 LA CORRECCIÓN CRÍTICA PARA EL FRONT-END: Habilitar CORS
 // Permite que cualquier origen consulte tu API REST
 header("Access-Control-Allow-Origin: *"); 
 // Permite los métodos que tu sistema y el navegador necesitan usar
