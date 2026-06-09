@@ -1,0 +1,9 @@
+Etapa 1: Creación del Pedido (Cliente compra ➡️ Base de datos)  ◀️ ¡EMPEZAMOS AQUÍ!
+   │
+Etapa 2: Mesa de Alistamiento (Staff escanea códigos de barra y valida stock)
+   │
+Etapa 3: Despacho y Generación de Guía (Se genera código único e imprime etiqueta)
+   │
+Etapa 4: Asignación y Salida a Ruta (Carga de deuda financiera al repartidor)
+   │
+Etapa 5: Entrega o Novedad en Calle (Cierre operativo y Devolución física a bodega)

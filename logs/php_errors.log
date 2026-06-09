@@ -1,5 +1,9 @@
-[05-Jun-2026 23:34:36 Europe/Berlin] PHP Warning:  session_destroy(): Trying to destroy uninitialized session in C:\xampp\htdocs\ecommerce-logistica\src\Controllers\AuthController.php on line 180
-[06-Jun-2026 01:18:53 Europe/Berlin] PHP Warning:  session_destroy(): Trying to destroy uninitialized session in C:\xampp\htdocs\ecommerce-logistica\src\Controllers\AuthController.php on line 180
-[06-Jun-2026 01:31:38 Europe/Berlin] PHP Warning:  session_destroy(): Trying to destroy uninitialized session in C:\xampp\htdocs\ecommerce-logistica\src\Controllers\AuthController.php on line 180
-[06-Jun-2026 01:43:53 Europe/Berlin] PHP Warning:  session_destroy(): Trying to destroy uninitialized session in C:\xampp\htdocs\ecommerce-logistica\src\Controllers\AuthController.php on line 180
-[06-Jun-2026 01:47:02 Europe/Berlin] PHP Warning:  session_destroy(): Trying to destroy uninitialized session in C:\xampp\htdocs\ecommerce-logistica\src\Controllers\AuthController.php on line 180
+[09-Jun-2026 10:53:00 Europe/Berlin] PHP Warning:  Undefined array key "id_Usuario" in C:\xampp\htdocs\ecommerce-logistica\src\Controllers\LogisticaController.php on line 282
+[09-Jun-2026 10:53:29 Europe/Berlin] PHP Warning:  Undefined array key "id_Usuario" in C:\xampp\htdocs\ecommerce-logistica\src\Controllers\LogisticaController.php on line 282
+[09-Jun-2026 10:55:00 Europe/Berlin] 🚨 CRÍTICO [API LOGÍSTICA]: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'metodo_pago' in 'field list' en C:\xampp\htdocs\ecommerce-logistica\src\Controllers\LogisticaController.php línea 266
+[09-Jun-2026 10:57:21 Europe/Berlin] 🚨 CRÍTICO [API LOGÍSTICA]: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'metodo_pago' in 'field list' en C:\xampp\htdocs\ecommerce-logistica\src\Controllers\LogisticaController.php línea 266
+[09-Jun-2026 10:58:58 Europe/Berlin] 🚨 CRÍTICO [API LOGÍSTICA]: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'fecha_creacion' in 'field list' en C:\xampp\htdocs\ecommerce-logistica\src\Controllers\LogisticaController.php línea 266
+[09-Jun-2026 10:59:59 Europe/Berlin] 🚨 CRÍTICO [API LOGÍSTICA]: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'fecha_creacion' in 'order clause' en C:\xampp\htdocs\ecommerce-logistica\src\Controllers\LogisticaController.php línea 266
+[09-Jun-2026 12:13:51 Europe/Berlin] Error en SecurityService::verificarAbuso -> SQLSTATE[42S02]: Base table or view not found: 1146 Table 'ecommerce_logistica_db.registro_trafico' doesn't exist
+[09-Jun-2026 12:14:25 Europe/Berlin] Error en SecurityService::verificarAbuso -> SQLSTATE[42S02]: Base table or view not found: 1146 Table 'ecommerce_logistica_db.registro_trafico' doesn't exist
+[09-Jun-2026 12:25:36 Europe/Berlin] Error en SecurityService::verificarAbuso -> SQLSTATE[42S02]: Base table or view not found: 1146 Table 'ecommerce_logistica_db.registro_trafico' doesn't exist

@@ -6,6 +6,7 @@ require_once __DIR__ . '/../Models/Producto.php';
 require_once __DIR__ . '/../Models/Pedido.php';
 require_once __DIR__ . '/../Models/Historial.php';
 require_once __DIR__ . '/../Middleware/AuthMiddleware.php';
+require_once __DIR__ . '/../Models/Logistica.php';
 
 class LogisticaController {
 
@@ -13,7 +14,7 @@ class LogisticaController {
      * [MIDDLEWARE INTERNO] Valida que el token pertenezca a un Staff o Admin
      */
     private function verificarAccesoStaff() {
-        AuthMiddleware::autenticar();
+        AuthMiddleware::verificarAcceso();
         $usuario = $GLOBALS['usuario_autenticado'] ?? null;
 
         if (!$usuario || !in_array($usuario['usuario_rol'], ['admin', 'staff'])) {
@@ -28,7 +29,7 @@ class LogisticaController {
      * [MIDDLEWARE INTERNO] Valida que el token pertenezca a un Repartidor o Admin
      */
     private function verificarAccessoDelivery() {
-        AuthMiddleware::autenticar();
+        AuthMiddleware::verificarAcceso();
         $usuario = $GLOBALS['usuario_autenticado'] ?? null;
 
         if (!$usuario || !in_array($usuario['usuario_rol'], ['admin', 'delivery'])) {
@@ -38,11 +39,155 @@ class LogisticaController {
         }
         return $usuario;
     }
+    /**
+     * Endpoint: POST /api/logistica/verificar-empaque
+     * Compara los códigos escaneados por el operario contra el pedido real.
+     */
+    public function verificarEmpaque() {
+        // 🔒 BLINDAJE: Solo permitimos a los roles 'admin' y 'staff'
+        $usuarioLogueado = AuthMiddleware::verificarAcceso(['admin', 'staff']);
+        
+        // Opcional: Reemplazar el ID quemado por el ID real extraído del Token JWT
+        $idUsuarioAccion = $usuarioLogueado['id_usuario'];
+        if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+            echo json_encode(["status" => "error", "message" => "Método no permitido."], 405);
+            exit;
+        }
+
+        // Leer JSON del body (Soporta payloads de lectores o apps móviles)
+        $input = json_decode(file_get_contents('php://input'), true) ?? $_POST;
+
+        if (empty($input['id_pedido']) || empty($input['codigos_escaneados'])) {
+            echo json_encode(["status" => "error", "message" => "El 'id_pedido' y la lista de 'codigos_escaneados' son requeridos."], 400);
+            exit;
+        }
+
+        $idPedido = (int)$input['id_pedido'];
+        $codigosEscaneados = $input['codigos_escaneados']; // Arreglo plano de strings ej: ["7702277074601", "7702277074601"]
+        $idUsuarioAccion = 1; // ID temporal de Staff para pruebas
+
+        // 1. Obtener lo que realmente debería tener el pedido
+        $pedido = Pedido::obtenerPorId($idPedido);
+        if (!$pedido) {
+            echo json_encode(["status" => "error", "message" => "El pedido no existe."], 404);
+            exit;
+        }
+
+        // Agregamos el estado 'cancelado' a las restricciones de flujo
+        if (in_array($pedido['estado_pedido'], ['alistando', 'en_ruta', 'cancelado'])) {
+            echo json_encode(["status" => "error", "message" => "Este pedido no puede ser alistado porque su estado actual es: '{$pedido['estado_pedido']}'."], 400);
+            exit;
+        }
+
+        // Cambiar estado a 'en_alistamiento' si es la primera vez que se toca
+        if ($pedido['estado_pedido'] === 'pendiente_confirmar') {
+            Logistica::iniciarAlistamiento($idPedido);
+        }
+
+        $productosTeoricos = Pedido::obtenerDetalles($idPedido);
+
+        // 2. Mapear lo teórico (Lo que compró) a un formato indexado por código de barras
+        $mapaTeorico = [];
+        foreach ($productosTeoricos as $p) {
+            $mapaTeorico[$p['codigo_barras']] = [
+                'nombre' => $p['nombre'],
+                'cantidad_requerida' => (int)$p['cantidad'],
+                'cantidad_escaneada' => 0
+            ];
+        }
+
+        // 3. Procesar el escaneo físico realizado por el Staff
+        foreach ($codigosEscaneados as $codigo) {
+            $codigo = trim($codigo);
+            if (!isset($mapaTeorico[$codigo])) {
+                // 🛑 ERROR: Metieron un producto que NO pertenece a este pedido
+                echo json_encode([
+                    "status" => "error",
+                    "code" => "PRODUCTO_INCORRECTO",
+                    "message" => "El producto con código de barras '{$codigo}' NO pertenece a este pedido. ¡Sácalo de la caja!"
+                ], 400);
+                exit;
+            }
+            $mapaTeorico[$codigo]['cantidad_escaneada']++;
+        }
+
+        // 4. Verificar que las cantidades coincidan exactamente (Ni más, ni menos)
+        $erroresCantidades = [];
+        foreach ($mapaTeorico as $codigo => $info) {
+            if ($info['cantidad_escaneada'] !== $info['cantidad_requerida']) {
+                $erroresCantidades[] = [
+                    "producto" => $info['nombre'],
+                    "codigo" => $codigo,
+                    "requeridos" => $info['cantidad_requerida'],
+                    "escaneados" => $info['cantidad_escaneada']
+                ];
+            }
+        }
+
+        if (!empty($erroresCantidades)) {
+            // 🛑 ERROR: Faltan o sobran unidades de algún producto
+           echo json_encode([
+                "status" => "error",
+                "code" => "CANTIDAD_DESCUADRADA",
+                "message" => "Las cantidades escaneadas no coinciden con las solicitadas por el cliente.",
+                "detalles" => $erroresCantidades
+            ], 400);
+            exit;
+        }
+
+        // 5. ¡TODO PERFECTO! Modificar estado del pedido a 'alistando'
+        $db = Database::conectar();
+        Logistica::completarAlistamiento($idPedido);
+        Pedido::registrarTracking($idPedido, $pedido['estado_pedido'], 'alistando', $db);
+
+        // Registrar en auditoría
+        Historial::registrar(
+            $idUsuarioAccion,
+            'LOGISTICA',
+            'EMPAQUE_VERIFICADO',
+            "El operario verificó con éxito el empaque del pedido #{$idPedido} mediante escaneo de códigos de barra."
+        );
+
+       echo json_encode([
+            "status" => "success",
+            "message" => "¡Empaque verificado con éxito! Todos los productos y cantidades coinciden al 100%. El pedido pasó al estado 'alistando'."
+        ], 200);
+        exit;
+    }
+
+/**
+     
+     * Retorna el estado global de la operación logística para el Dashboard
+     */
+    public function obtenerReporteKPIs() {
+        AuthMiddleware::verificarAcceso(['admin', 'staff']);
+        if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
+            echo json_encode(["status" => "error", "message" => "Método no permitido."], 405);
+        }
+
+        $kpis = Logistica::obtenerKPIs();
+
+        if (empty($kpis)) {
+            echo json_encode(["status" => "error", "message" => "No se pudieron calcular los KPIs."], 500);
+        }
+
+        // Calcular un porcentaje rápido de alertas si hay muchas novedades activos
+        $totalCriticos = $kpis['estados']['novedad_en_calle'];
+        $alertaNovedades = $totalCriticos > 5 ? true : false; // Switch lógico de alerta para el frontend
+
+        echo json_encode([
+            "status" => "success",
+            "timestamp" => date('Y-m-d H:i:s'),
+            "alerta_novedades" => $alertaNovedades,
+            "data" => $kpis
+        ], 200);
+    }
 
     /**
      * El Staff escanea un código de barras para verificarlo contra el pedido real
      */
     public function verificarItemEscaneado() {
+        AuthMiddleware::verificarAcceso(['admin', 'staff']);
         $this->verificarAccesoStaff(); 
 
         if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -99,7 +244,68 @@ class LogisticaController {
             ]);
         }
     }
+    /**
+     * Endpoint: GET /api/logistica/pedidos
+     * Visualizar pedidos asignados vigentes para el repartidor autenticado
+     */
+    public function listarPedidosAsignados() {
+        // 🔒 Validar acceso exclusivo para Delivery
+        $delivery = AuthMiddleware::verificarAcceso(['delivery']);
+        $idDelivery = $delivery['id_usuario'];
 
+        $db = Database::conectar();
+        
+        // Trae los pedidos asignados que están en proceso de distribución
+        $sql = "SELECT id_pedido, cliente_nombre, cliente_telefono, cliente_direccion, 
+                       total, tipo_pago, estado_pedido, fecha_pedido 
+                FROM pedidos 
+                WHERE id_repartidor = :id_repartidor 
+                  AND estado_pedido IN ('en_ruta', 'pendiente_entrega')
+                ORDER BY fecha_pedido DESC";
+                
+        $stmt = $db->prepare($sql);
+        $stmt->execute([':id_repartidor' => $idDelivery]);
+        $pedidos = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode([
+            "status" => "success",
+            "data" => $pedidos
+        ]);
+    }
+      /**
+     * Endpoint: GET /api/logistica/balance-diario
+     * Consultar el balance diario de efectivo recolectado hoy (Corte de caja en calle)
+     */
+    public function consultarBalanceDiario() {
+        $repartidor = AuthMiddleware::verificarAcceso(['delivery']);
+        $idrepartidor = $repartidor['id_Usuario'];
+
+        $db = Database::conectar();
+
+        // Sumar los pedidos pagados en efectivo entregados por este repartidor el día de HOY
+        $sql = "SELECT COALESCE(SUM(total), 0.00) AS efectivo_recolectado,
+                       COUNT(id_pedido) AS entregas_exitosas
+                FROM pedidos 
+                WHERE id_repartidor = :id_repartidor 
+                  AND estado_pedido = 'entregado' 
+                  AND tipo_pago = 'contraentrega'
+                  AND DATE(fecha_actualizacion) = CURRENT_DATE()";
+
+        $stmt = $db->prepare($sql);
+        $stmt->execute([':id_repartidor' => $idrepartidor]);
+        $balance = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode([
+            "status" => "success",
+            "fecha" => date('Y-m-d'),
+            "balance" => [
+                "efectivo_total" => (float)$balance['efectivo_recolectado'],
+                "total_entregas" => (int)$balance['entregas_exitosas']
+            ]
+        ]);
+    }
     /**
      * Cuando el Staff termina de escanear todo con éxito, cierra el empaque
      */
@@ -199,7 +405,7 @@ class LogisticaController {
      */
     
     public function asignarAdomiciliario() {
-        AuthMiddleware::autenticar();
+        AuthMiddleware::verificarAcceso();
         $usuario = $GLOBALS['usuario_autenticado'] ?? null;
 
         if (!$usuario || $usuario['usuario_rol'] !== 'admin') {
@@ -219,12 +425,12 @@ class LogisticaController {
             }
 
             // 1. Ejecutamos la asignación logística existente en la base de datos
-            $exito = Despacho::asignarRepartidor($idPedido, $idUsuarioDelivery);
+            $exito = Despacho::asignarRepartidorautomatico($idPedido, $idUsuarioDelivery);
 
             if ($exito) {
                 // 2. 🔥 AUTOMATIZACIÓN FINANCIERA (Estilo Rappi):
                 // Consultamos los detalles del pedido para verificar el tipo de pago y el total a cobrar
-                $pedidoInfo = Pedido::buscarPorId($idPedido); // Asegúrate de tener este método en tu modelo Pedido o usa tu consulta equivalente
+                $pedidoInfo = Pedido::obtenerPorId($idPedido); // Asegúrate de tener este método en tu modelo Pedido o usa tu consulta equivalente
                 
                 if ($pedidoInfo && $pedidoInfo['tipo_pago'] === 'contraentrega') {
                     require_once __DIR__ . '/../Models/CajaDelivery.php';

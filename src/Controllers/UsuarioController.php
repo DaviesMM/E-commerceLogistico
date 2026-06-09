@@ -12,7 +12,7 @@ class UsuarioController {
      */
     private function verificarAccesoAdmin() {
         // 1. Forzamos la validación del Token JWT en la cabecera HTTP
-        AuthMiddleware::autenticar();
+        AuthMiddleware::verificarAcceso();  
 
         // 2. Extraemos los datos inyectados globalmente por el guardián
         $usuario = $GLOBALS['usuario_autenticado'] ?? null;
@@ -100,7 +100,7 @@ class UsuarioController {
     // Dentro de src/Controllers/UsuarioController.php
 
 public function obtenerDetalle($id) {
-    AuthMiddleware::autenticar(); // Validar token
+    AuthMiddleware::verificarAcceso(); // Validar token
 
     if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         if (!$id) {
@@ -109,7 +109,7 @@ public function obtenerDetalle($id) {
             return;
         }
 
-        $usuario = Usuario::buscarPorId($id);
+        $usuario = Usuario::obtenerPorId($id);
 
         if ($usuario) {
             // Ocultamos la contraseña por seguridad antes de escupir el JSON

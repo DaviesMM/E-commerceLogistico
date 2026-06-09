@@ -1,304 +1,292 @@
 <?php
-// src/Controllers/ProductoController.php
-require_once __DIR__ . '/../Services/Uploader.php';
+
 require_once __DIR__ . '/../Models/Producto.php';
-require_once __DIR__ . '/../Middleware/AuthMiddleware.php';
 require_once __DIR__ . '/../Models/Historial.php';
+require_once __DIR__ . '/../Middleware/AuthMiddleware.php';
 
 class ProductoController {
 
     /**
-     * Middleware interno para verificar acceso mediante JWT (Admin o Staff pueden gestionar productos).
+     * Endpoint: GET /api/producto/verificar-codigo
+     * RF-3.1: Valida de forma preventiva si un código de barras ya existe
      */
-    private function verificarAccesoPermitido() {
-        AuthMiddleware::autenticar();
-        $usuario = $GLOBALS['usuario_autenticado'] ?? null;
+    public function verificarCodigo() {
+        // Permitir acceso a Admin y Staff
+        AuthMiddleware::verificarAcceso(['admin', 'staff']);
 
-        if (!$usuario || !in_array($usuario['usuario_rol'], ['admin', 'staff'])) {
-            http_response_code(403);
-            echo json_encode(["status" => "error", "message" => "Acceso denegado. No tiene permisos para gestionar inventario."]);
+        $codigo = isset($_GET['codigo_barras']) ? trim($_GET['codigo_barras']) : '';
+
+        if (empty($codigo)) {
+            http_response_code(400);
+            echo json_encode(["status" => "error", "message" => "El código de barras es requerido."]);
             exit;
         }
 
-        return $usuario;
+        $db = Database::conectar();
+        $sql = "SELECT id_producto, nombre, stock FROM productos WHERE codigo_barras = :codigo AND eliminado_logico = 0 LIMIT 1";
+        $stmt = $db->prepare($sql);
+        $stmt->execute([':codigo' => $codigo]);
+        $producto = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        header('Content-Type: application/json; charset=utf-8');
+        if ($producto) {
+            // RF-3.1 Si ya existe, se envía bandera para bloquear duplicidad y sugerir reabastecimiento
+            echo json_encode([
+                "status" => "exists",
+                "message" => "El código de barras ya está registrado en el sistema. Redirigiendo a reabastecimiento.",
+                "data" => [
+                    "id_producto" => $producto['id_producto'],
+                    "nombre" => $producto['nombre'],
+                    "stock_actual" => $producto['stock']
+                ]
+            ]);
+        } else {
+            // Si no existe, habilita el formulario completo
+            echo json_encode([
+                "status" => "available",
+                "message" => "Código de barras disponible. Habilitando formulario de creación."
+            ]);
+        }
+        exit;
     }
 
     /**
-     * Registra un producto escaneado/digitado.
+     * Endpoint: POST /api/producto/crear
+     * RF-3.2: Registro completo con validación de duplicados y galería múltiple
      */
- public function registrar() {
-    $usuarioLogueado = $this->verificarAccesoPermitido();
+    public function crearProducto() {
+        $usuario = AuthMiddleware::verificarAcceso(['admin', 'staff']);
+        $idUsuario = $usuario['id_usuario'];
 
-    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-        $codigo_barras       = filter_input(INPUT_POST, 'codigo_barras', FILTER_DEFAULT);
-        $nombre              = filter_input(INPUT_POST, 'nombre', FILTER_DEFAULT);
-        $descripcion         = filter_input(INPUT_POST, 'descripcion', FILTER_DEFAULT);
-        $precio              = filter_input(INPUT_POST, 'precio', FILTER_VALIDATE_FLOAT);
-        $stock               = filter_input(INPUT_POST, 'stock', FILTER_VALIDATE_INT);
-        $tipo_disponibilidad = $_POST['tipo_disponibilidad'] ?? 'stock'; 
-        $dias_espera         = filter_input(INPUT_POST, 'dias_espera', FILTER_VALIDATE_INT) ?? 0;
-        $fecha_vencimiento  = $_POST['fecha_vencimiento'] ?? null;
+        // Captura de datos (form-data debido a las imágenes)
+        $idCategoria = isset($_POST['id_categoria']) ? (int)$_POST['id_categoria'] : null;
+        $codigoBarras = isset($_POST['codigo_barras']) ? trim($_POST['codigo_barras']) : null;
+        $nombre = isset($_POST['nombre']) ? trim($_POST['nombre']) : null;
+        $precio = isset($_POST['precio']) ? (float)$_POST['precio'] : 0.00;
+        $stock = isset($_POST['stock']) ? (int)$_POST['stock'] : 0;
 
-        // 1. Validaciones iniciales de texto y valores numéricos
-        if (empty($codigo_barras) || empty($nombre) || $precio === false || $stock === false) {
+        if (!$idCategoria || !$codigoBarras || empty($nombre)) {
             http_response_code(400);
-            echo json_encode(["status" => "error", "message" => "Datos de producto incompletos o inválidos."]);
-            return;
-        }
-
-        if (Producto::buscarPorCodigoBarras($codigo_barras)) {
-            http_response_code(409); // Conflict
-            echo json_encode(["status" => "error", "message" => "El código de barras ya está registrado en otro producto."]);
-            return;
+            echo json_encode(["status" => "error", "message" => "Campos obligatorios incompletos."]);
+            exit;
         }
 
         $db = Database::conectar();
 
-        try {
-            // 🔥 INICIAMOS TRANSACCIÓN: Protege la base de datos si ocurre un error con los archivos físicos
-            $db->beginTransaction();
+        // 🔒 RF-3.1: Doble verificación estricta de duplicados en inserción
+        $sqlCheck = "SELECT COUNT(*) FROM productos WHERE codigo_barras = :codigo AND eliminado_logico = 0";
+        $stmtCheck = $db->prepare($sqlCheck);
+        $stmtCheck->execute([':codigo' => $codigoBarras]);
+        if ((int)$stmtCheck->fetchColumn() > 0) {
+            http_response_code(409);
+            echo json_encode(["status" => "error", "message" => "Operación denegada. El código de barras ya pertenece a un producto activo."]);
+            exit;
+        }
 
-            // 2. Registramos el producto base (Pasamos temporalmente una imagen por defecto para mantener compatibilidad con tu modelo antiguo si es necesario, o lo manejamos directo en la nueva tabla)
-            $rutaImagenPrincipal = "uploads/productos/default.png"; 
+        // 📸 RF-3.2: Procesamiento e inyección de galería de imágenes
+        $imagenesParaGuardar = [];
+        $portadaUrl = 'uploads/default.png';
+        $extensionesPermitidas = ['png', 'jpg', 'jpeg'];
+
+        $keyFiles = isset($_FILES['imagenes']) ? 'imagenes' : (isset($_FILES['imagenes[]']) ? 'imagenes[]' : '');
+
+        if (!empty($keyFiles)) {
+            $files = $_FILES[$keyFiles];
+            $totalArchivos = is_array($files['name']) ? count($files['name']) : 1;
             
-            $exitoProducto = Producto::crear($codigo_barras, $rutaImagenPrincipal, $nombre, $descripcion, $precio, $stock, $tipo_disponibilidad, $dias_espera, $fecha_vencimiento);
-            
-            if (!$exitoProducto) {
-                throw new Exception("No se pudo insertar el producto en la base de datos.");
+            $basePath = $_SERVER['DOCUMENT_ROOT'] . '/ecommerce-logistica/public/';
+            $directorioDestino = $basePath . 'uploads/productos/';
+
+            if (!is_dir($directorioDestino)) {
+                mkdir($directorioDestino, 0777, true);
             }
 
-            // Recuperamos el ID del producto que se acaba de crear para amarrar las fotos
-            $id_producto = $db->lastInsertId();
+            for ($i = 0; $i < $totalArchivos; $i++) {
+                $error = is_array($files['error']) ? $files['error'][$i] : $files['error'];
+                $tmpName = is_array($files['tmp_name']) ? $files['tmp_name'][$i] : $files['tmp_name'];
+                $name = is_array($files['name']) ? $files['name'][$i] : $files['name'];
 
-            // 3. PROCESAMIENTO DE MÚLTIPLES ÁNGULOS (Imágenes)
-          
+                if ($error === UPLOAD_ERR_OK) {
+                    $ext = strtolower(pathinfo($name, PATHINFO_EXTENSION));
+                    
+                    if (!in_array($ext, $extensionesPermitidas)) {
+                        http_response_code(400);
+                        echo json_encode(["status" => "error", "message" => "Formato inaceptable ({$ext}). Solo .png, .jpg, .jpeg"]);
+                        exit;
+                    }
 
-            // 3. PROCESAMIENTO DE MÚLTIPLES ÁNGULOS (Imágenes)
-            if (isset($_FILES['imagenes']) && is_array($_FILES['imagenes']['name'])) {
-                $totalArchivos = count($_FILES['imagenes']['name']);
-                $imagenPrincipalAsignada = false;
+                    $nuevoNombre = "prod_" . uniqid() . "_" . $i . "." . $ext;
+                    if (move_uploaded_file($tmpName, $directorioDestino . $nuevoNombre)) {
+                        $esPrincipal = (isset($_POST['index_portada']) && (int)$_POST['index_portada'] === $i) || ($i === 0);
+                        $rutaBD = "uploads/productos/" . $nuevoNombre;
 
-                for ($i = 0; $i < $totalArchivos; $i++) {
-                    // Reestructuramos el array para el helper Uploader
-                    $archivoIndividual = [
-                        'name'     => $_FILES['imagenes']['name'][$i],
-                        'type'     => $_FILES['imagenes']['type'][$i],
-                        'tmp_name' => $_FILES['imagenes']['tmp_name'][$i],
-                        'error'    => $_FILES['imagenes']['error'][$i],
-                        'size'     => $_FILES['imagenes']['size'][$i]
-                    ];
+                        $imagenesParaGuardar[] = [
+                            "ruta" => $rutaBD,
+                            "es_principal" => $esPrincipal ? 1 : 0
+                        ];
 
-                    if ($archivoIndividual['error'] === UPLOAD_ERR_OK) {
-                        $subida = Uploader::subirImagen($archivoIndividual, 'productos');
-                        
-                        if ($subida) {
-                            // La primera imagen exitosa será la principal (1), las demás serán ángulos secundarios (0)
-                            $es_principal = !$imagenPrincipalAsignada ? 1 : 0;
-                            
-                            // Insertamos en la tabla relacional de imágenes
-                            $sqlImg = "INSERT INTO producto_imagenes (id_producto, ruta_imagen, es_principal) 
-                                    VALUES (:id_prod, :ruta, :principal)";
-                            $stmtImg = $db->prepare($sqlImg);
-                            $stmtImg->execute([
-                                ':id_prod'   => $id_producto,
-                                ':ruta'      => $subida,
-                                ':principal' => $es_principal
-                            ]);
-
-                            // Marcamos que ya encontramos y guardamos la portada principal con éxito
-                            if ($es_principal) {
-                                $imagenPrincipalAsignada = true;
-                            }
+                        if ($esPrincipal) {
+                            $portadaUrl = $rutaBD;
                         }
                     }
                 }
             }
+        }
 
-            // 4. Si todo salió perfecto, confirmamos los cambios en las tablas de MySQL
-            $db->commit();
+        $datosProducto = [
+            'id_categoria'  => $idCategoria,
+            'codigo_barras' => $codigoBarras,
+            'imagen_url'    => $portadaUrl,
+            'nombre'        => $nombre,
+            'descripcion'   => isset($_POST['descripcion']) ? trim($_POST['descripcion']) : '',
+            'precio'        => $precio,
+            'stock'         => $stock
+        ];
 
-            // Dejamos constancia de la entrada de inventario en el historial
-            Historial::registrar($usuarioLogueado['usuario_id'], 'Inventario', 'Crear', "Registró el producto: {$nombre} con múltiples ángulos (Código: {$codigo_barras})");
-            
+        // Llamar al método del Modelo transaccional (guarda productos e imágenes)
+        $idNuevoProducto = Producto::registrarConGaleria($datosProducto, $imagenesParaGuardar);
+
+        header('Content-Type: application/json; charset=utf-8');
+        if ($idNuevoProducto > 0) {
+            Historial::registrar($idUsuario, 'INVENTARIO', 'ALTA_PRODUCTO', "Se registró el producto '{$nombre}' (#{$idNuevoProducto}).");
             http_response_code(201);
-            echo json_encode(["status" => "success", "message" => "Producto e imágenes de catálogo registrados exitosamente."]);
-
-        } catch (Exception $e) {
-            // 🔥 ESCUDO: Si algo falla (ej. carpeta sin permisos o error SQL), borramos el producto creado para evitar basura en la BD
-            if ($db->inTransaction()) {
-                $db->rollBack();
-            }
-
-            error_log("🚨 ERROR CRÍTICO [REGISTRO PRODUCTO]: " . $e->getMessage());
-            http_response_code(500);
-            echo json_encode(["status" => "error", "message" => "Error interno al guardar el producto y sus imágenes de ángulos."]);
-        }
-    }
-}
-
-// Dentro de src/Controllers/ProductoController.php
-
-public function actualizarStock() {
-    $usuarioLogueado = $this->verificarAccesoPermitido();
-
-    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-        $id_producto = filter_input(INPUT_POST, 'id_producto', FILTER_VALIDATE_INT);
-        $nuevo_stock = filter_input(INPUT_POST, 'stock', FILTER_VALIDATE_INT);
-
-        if (!$id_producto || $nuevo_stock === false || $nuevo_stock < 0) {
-            http_response_code(400);
-            echo json_encode(["status" => "error", "message" => "ID de producto y stock válido requeridos."]);
-            return;
-        }
-
-        $exito = Producto::modificarStockManual($id_producto, $nuevo_stock);
-
-        if ($exito) {
-            Historial::registrar($usuarioLogueado['usuario_id'], 'Inventario', 'Auditoría', "Corrigió stock manualmente del producto ID {$id_producto} a {$nuevo_stock} unidades.");
-            http_response_code(200);
-            echo json_encode(["status" => "success", "message" => "Stock corregido exitosamente en auditoría."]);
+            echo json_encode(["status" => "success", "message" => "Producto y galería guardados.", "id_producto" => $idNuevoProducto]);
         } else {
             http_response_code(500);
-            echo json_encode(["status" => "error", "message" => "No se pudo actualizar el stock."]);
+            echo json_encode(["status" => "error", "message" => "Error interno en el servidor."]);
         }
+        exit;
     }
-}
 
-public function actualizar() {
-    $usuarioLogueado = $this->verificarAccesoPermitido();
-
-    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-        $id_producto         = filter_input(INPUT_POST, 'id_producto', FILTER_VALIDATE_INT);
-        $codigo_barras       = filter_input(INPUT_POST, 'codigo_barras', FILTER_DEFAULT);
-        $nombre              = filter_input(INPUT_POST, 'nombre', FILTER_DEFAULT);
-        $descripcion         = filter_input(INPUT_POST, 'descripcion', FILTER_DEFAULT);
-        $precio              = filter_input(INPUT_POST, 'precio', FILTER_VALIDATE_FLOAT);
-        $tipo_disponibilidad = $_POST['tipo_disponibilidad'] ?? 'stock';
-
-        if (!$id_producto || empty($nombre) || $precio === false) {
-            http_response_code(400);
-            echo json_encode(["status" => "error", "message" => "Datos de actualización incompletos."]);
-            return;
-        }
-
-        // Ejecutar actualización en el modelo
-        $exito = Producto::actualizarDatosBase($id_producto, $codigo_barras, $nombre, $descripcion, $precio, $tipo_disponibilidad);
-
-        if ($exito) {
-            Historial::registrar($usuarioLogueado['usuario_id'], 'Inventario', 'Editar', "Actualizó información del producto: {$nombre}");
-            http_response_code(200);
-            echo json_encode(["status" => "success", "message" => "Ficha técnica del producto actualizada con éxito."]);
-        } else {
-            http_response_code(500);
-            echo json_encode(["status" => "error", "message" => "Error interno al modificar el producto."]);
-        }
-    }
-}
-
-        /**
-     * Endpoint para el escáner: busca un producto al instante pasando el código por POST o GET.
-     */
-    public function buscarPorCodigo() {
-        $this->verificarAccesoPermitido();
-
-        $codigo = $_REQUEST['codigo_barras'] ?? '';
-
-        if (empty($codigo)) {
-            http_response_code(400);
-            echo json_encode(["status" => "error", "message" => "Código de barras requerido."]);
-            return;
-        }
-
-        $producto = Producto::buscarPorCodigoBarras($codigo);
-
-        if ($producto) {
-            echo json_encode(["status" => "success", "data" => $producto]);
-        } else {
-            http_response_code(404);
-            echo json_encode(["status" => "error", "message" => "Producto no encontrado con ese código de barras."]);
-        }
-    }
-    // Dentro de src/Controllers/ProductoController.php
-
-public function eliminar() {
-    /** @var array $usuarioLogueado */
-    $usuarioLogueado = AuthMiddleware::autenticar();
-
-    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-        $id_producto = filter_input(INPUT_POST, 'id_producto', FILTER_VALIDATE_INT);
-
-        if (!$id_producto) {
-            http_response_code(400);
-            echo json_encode(["status" => "error", "message" => "ID de producto requerido."]);
-            return;
-        }
-
-        // Ejecutamos el borrado lógico en el modelo
-        $exito = Producto::desactivarLogico($id_producto);
-
-        if ($exito) {
-            Historial::registrar($usuarioLogueado['usuario_id'], 'Inventario', 'Eliminar', "Desactivó (Borrado Lógico) el producto ID: {$id_producto}");
-            
-            http_response_code(200);
-            echo json_encode(["status" => "success", "message" => "Producto retirado del catálogo exitosamente."]);
-        } else {
-            http_response_code(500);
-            echo json_encode(["status" => "error", "message" => "No se pudo desactivar el producto."]);
-        }
-    }
-}
     /**
-     * Lista todo el catálogo de productos.
+     * Endpoint: GET /api/producto/listar
+     * Listar productos con paginación y filtros
      */
+    public function listarProductos() {
+        AuthMiddleware::verificarAcceso(['admin', 'staff']);
 
-    public function listar() {
-    // Validamos acceso si tu flujo de administración lo requiere
-    // AuthMiddleware::autenticar();
+        $pagina = isset($_GET['pagina']) ? (int)$_GET['pagina'] : 1;
+        $limite = isset($_GET['limite']) ? (int)$_GET['limite'] : 10;
+        $buscar = isset($_GET['buscar']) ? trim($_GET['buscar']) : '';
+        $offset = ($pagina - 1) * $limite;
 
-    if ($_SERVER['REQUEST_METHOD'] === 'GET') {
+        $db = Database::conectar();
         
-        // Capturar parámetros opcionales de la URL (ej: ?pagina=2&limite=10)
-        $pagina = filter_input(INPUT_GET, 'pagina', FILTER_VALIDATE_INT) ?: 1;
-        $limite = filter_input(INPUT_GET, 'limite', FILTER_VALIDATE_INT) ?: 15;
+        // Construir Query Dinámico
+        $whereClause = "WHERE eliminado_logico = 0";
+        $params = [];
 
-        // Asegurarnos de que no manden números negativos o cero
-        if ($pagina < 1) $pagina = 1;
-        if ($limite < 1 || $limite > 100) $limite = 15; // Capamos a máximo 100 por seguridad
-
-        // Invocar el modelo paginado original
-        $resultado = Producto::listarPaginado($pagina, $limite);
-
-        // 🔥 INYECCIÓN DE IMÁGENES RELACIONADAS
-        // Verificamos que existan productos en la página actual antes de iterar
-        if (!empty($resultado['data']) && is_array($resultado['data'])) {
-            $db = Database::conectar();
-
-            // Usamos el símbolo '&' para modificar directamente el valor del array original
-            foreach ($resultado['data'] as &$producto) {
-                
-                // Buscamos todas las imágenes asociadas al ID del producto actual
-                // Las ordenamos para que la portada principal (es_principal = 1) aparezca de primera
-                $sqlImg = "SELECT id_imagen, ruta_imagen, es_principal 
-                           FROM producto_imagenes 
-                           WHERE id_producto = :id_prod 
-                           ORDER BY es_principal DESC, id_imagen ASC";
-                
-                $stmtImg = $db->prepare($sqlImg);
-                $stmtImg->execute([':id_prod' => $producto['id_producto']]);
-                
-                // Adjuntamos la colección de ángulos como un sub-array dentro del producto
-                $producto['imagenes'] = $stmtImg->fetchAll(PDO::FETCH_ASSOC);
-            }
+        if (!empty($buscar)) {
+            $whereClause .= " AND (nombre LIKE :buscar OR codigo_barras = :codigo)";
+            $params[':buscar'] = "%{$buscar}%";
+            $params[':codigo'] = $buscar;
         }
 
-        // Retornamos la respuesta con la paginación intacta y la data enriquecida
-        http_response_code(200);
+        // Obtener Total para la paginación
+        $sqlTotal = "SELECT COUNT(*) FROM productos $whereClause";
+        $stmtTotal = $db->prepare($sqlTotal);
+        $stmtTotal->execute($params);
+        $totalItems = (int)$stmtTotal->fetchColumn();
+
+        // Obtener Registros
+        $sqlData = "SELECT id_producto, id_categoria, codigo_barras, nombre, precio, stock, imagen_url 
+                    FROM productos 
+                    $whereClause 
+                    ORDER BY id_producto DESC 
+                    LIMIT $limite OFFSET $offset";
+                    
+        $stmtData = $db->prepare($sqlData);
+        $stmtData->execute($params);
+        $productos = $stmtData->fetchAll(PDO::FETCH_ASSOC);
+
+        header('Content-Type: application/json; charset=utf-8');
         echo json_encode([
             "status" => "success",
-            "message" => "Catálogo de productos con múltiples imágenes",
-            "data" => $resultado['data'],
-            "paginacion" => $resultado['paginacion']
+            "paginacion" => [
+                "total_items" => $totalItems,
+                "pagina_actual" => $pagina,
+                "paginas_totales" => ceil($totalItems / $limite)
+            ],
+            "data" => $productos
         ]);
+        exit;
     }
-}
+
+    /**
+     * Endpoint: POST /api/producto/actualizar
+     * Actualiza datos de un producto existente
+     */
+    public function actualizarProducto() {
+        $usuario = AuthMiddleware::verificarAcceso(['admin', 'staff']);
+        $idUsuario = $usuario['id_usuario'];
+
+        $data = json_decode(file_get_contents("php://input"), true);
+        $idProducto = isset($data['id_producto']) ? (int)$data['id_producto'] : null;
+
+        if (!$idProducto) {
+            http_response_code(400);
+            echo json_encode(["status" => "error", "message" => "ID de producto no provisto."]);
+            exit;
+        }
+
+        $db = Database::conectar();
+        $sql = "UPDATE productos SET 
+                    id_categoria = :id_cat, 
+                    nombre = :nombre, 
+                    precio = :precio, 
+                    stock = :stock 
+                WHERE id_producto = :id AND eliminado_logico = 0";
+                
+        $stmt = $db->prepare($sql);
+        $exito = $stmt->execute([
+            ':id_cat' => $data['id_categoria'],
+            ':nombre' => trim($data['nombre']),
+            ':precio' => (float)$data['precio'],
+            ':stock'  => (int)$data['stock'],
+            ':id'     => $idProducto
+        ]);
+
+        header('Content-Type: application/json; charset=utf-8');
+        if ($exito) {
+            Historial::registrar($idUsuario, 'INVENTARIO', 'MODIFICAR_PRODUCTO', "Se actualizaron los datos del producto ID #{$idProducto}.");
+            echo json_encode(["status" => "success", "message" => "Producto modificado con éxito."]);
+        } else {
+            http_response_code(500);
+            echo json_encode(["status" => "error", "message" => "No se pudo actualizar el registro."]);
+        }
+        exit;
+    }
+
+    /**
+     * Endpoint: POST /api/producto/eliminar
+     * Eliminación lógica preventiva del producto (eliminado_logico = 1)
+     */
+    public function eliminarProducto() {
+        $usuario = AuthMiddleware::verificarAcceso(['admin', 'staff']);
+        $idUsuario = $usuario['id_usuario'];
+
+        $data = json_decode(file_get_contents("php://input"), true);
+        $idProducto = isset($data['id_producto']) ? (int)$data['id_producto'] : null;
+
+        if (!$idProducto) {
+            http_response_code(400);
+            echo json_encode(["status" => "error", "message" => "Identificador inválido."]);
+            exit;
+        }
+
+        $db = Database::conectar();
+        $sql = "UPDATE productos SET eliminado_logico = 1 WHERE id_producto = :id";
+        $stmt = $db->prepare($sql);
+        $exito = $stmt->execute([':id' => $idProducto]);
+
+        header('Content-Type: application/json; charset=utf-8');
+        if ($exito) {
+            Historial::registrar($idUsuario, 'INVENTARIO', 'BAJA_PRODUCTO', "Eliminación lógica del producto ID #{$idProducto}.");
+            echo json_encode(["status" => "success", "message" => "Producto eliminado lógicamente del catálogo."]);
+        } else {
+            http_response_code(500);
+            echo json_encode(["status" => "error", "message" => "Fallo al procesar la baja del producto."]);
+        }
+        exit;
+    }
 }

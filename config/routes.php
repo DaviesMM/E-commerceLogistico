@@ -7,74 +7,61 @@ $router = new Router();
 // =========================================================================
 // 🔐 RECURSO: AUTENTICACIÓN (`/auth`)
 // =========================================================================
-
 $router->post('auth/login', 'AuthController@login');        // Enviar credenciales
 $router->post('auth/logout', 'AuthController@logout');      // Destruir sesión/token
-$router->post('auth/refresh', 'AuthController@refresh');    // Renovar Access Token (JWT)
+$router->post('auth/refresh', 'AuthController@refresh');    // Rotación automática (RTR) cada 15 min
+// Rutas para el control de personal y seguridad RF-4.2, solo lo puede hacer el Admin
+$router->post('auth/registrar-personal', 'AuthController@registrarPersonal'); // registro de nuevo personal administrativo o de logística
+$router->post('auth/verificar-cuenta', 'AuthController@verificarCuenta'); //  Endpoint para verificar la cuenta del personal registrado (envío de correo de verificación)
+// =========================================================================
+// 📦 RECURSO: PEDIDOS (`/api/pedidos`)
+// =========================================================================
+$router->post('api/pedidos/crear', 'PedidoController@registrar');      // Simulación de compra o entrada del cliente
+$router->get('api/pedidos/listar', 'PedidoController@listar');         // Panel administrativo con paginación y filtros
+$router->post('api/pedidos/cancelar', 'PedidoController@cancelarPedido'); // Cancelación y reverso estricto al stock físico
+$router->get('api/pedidos/verdetalle', 'PedidoController@verDetalle');   // Consulta   de detalle individual de pedido      
+// editar el pedido, solo se puede hacer si el pedido no ha sido procesado para despacho
+// solo puede hacer admin o staff, como soporte por llamada 
+$router->post('api/pedidos/editar', 'PedidoController@editarPedido');
 
 // =========================================================================
-// 👥 RECURSO: USUARIOS (`admin/usuarios`)
+// 🚛 RECURSO: LOGÍSTICA Y MESA DE EMPAQUE (`/api/logistica`)
 // =========================================================================
-$router->get('admin/usuarios', 'UsuarioController@listar');       // GET = Listar todo
-$router->post('admin/usuarios', 'UsuarioController@registrar');   // POST = Crear nuevo
-$router->post('admin/usuarios/actualizar', 'UsuarioController@modificar');    // POST = Actualizar datos 
-$router->post('admin/pedidos/cancelar', 'PedidoController@cancelarPedido'); // POST = Cancelar un pedido específico (con lógica de devolución al stock)
-$router->post('admin/pedidos/estado', 'PedidoController@actualizarEstado'); // POST = Cambiar estado de un pedido (ej: de 'pendiente_confirmar' a 'pago_pendiente' o 'cancelado')
-$router->post('admin/pedidos/total', 'PedidoController@obtenerTotal'); // POST = Obtener el total de un pedido específico (útil para auditoría y validación de pagos)
-$router->post('admin/pedidos/devolver-stock', 'PedidoController@devolver'); // POST = Devolver los productos de un pedido al stock general (Útil para cancelaciones)
-$router->post('admin/productos/actualizar-stock', 'ProductoController@actualizarStock'); // POST = Actualizar el stock de un producto específico (ej: después de una auditoría o corrección manual)
-$router->post('admin/productos/actualizar', 'ProductoController@actualizar');
-// Ruta para que el Admin supervise toda la logística de la calle
-$router->get('admin/pedidos/despachos', 'PedidoController@obtenerTodosLosDespachos');
-// Nota: Si tu router no soporta el método PUT nativo, puedes dejarlo como POST, 
-// pero la URL se mantiene limpia: 'admin/usuarios'
+$router->post('api/logistica/verificar-empaque', 'LogisticaController@verificarEmpaque'); // Endpoint para validar peso/dimensiones antes de generar la guía
+$router->post('api/logistica/actualizar-estado', 'EntregaController@actualizarEstadoCalle');// Reporte de novedades o entregas desde el móvil del repartidor
+$router->get('api/logistica/kpis', 'LogisticaController@obtenerReporteKPIs'); // Endpoint para obtener los KPIs de logística
+// Rutas exclusivas para la interfaz móvil del repartidor (Delivery)
+$router->get('api/logistica/pedidos', 'LogisticaController@listarPedidosAsignados'); // listar los pedidos que fueron asignados a un repartidor
+$router->get('api/logistica/balance-diario', 'LogisticaController@consultarBalanceDiario'); // consultar el balance diario del repartidor
+$router->post('api/entrega/registrar-novedad', 'EntregaController@registrarNovedadRuta'); // registrar Novedad  en la ruta
+// =========================================================================
+// ✈️ RECURSO: DESPACHOS Y ASIGNACIÓN DE GUÍAS (`/api/despacho`)
+// =========================================================================
+$router->post('api/despacho/generar-guia', 'DespachoController@procesarDespacho'); // generar guias de Despacho Unica
+$router->get('api/despacho/consultar', 'DespachoController@verDespacho'); // Consulta de datos de despacho por ID de pedido
+$router->post('api/despacho/procesar', 'DespachoController@procesarDespacho'); // Endpoint para procesar el despacho, generar la guía y asignarla a un repartidor
 
-// Rutas de administración y control operativo de personal y stock
-$router->get('admin/usuarios/detalle', 'UsuarioController@obtenerDetalle'); 
-$router->post('admin/productos/eliminar', 'ProductoController@eliminar');
-$router->post('admin/pedidos/asignar-repartidor', 'PedidoController@asignarRepartidor');
-
+// RF-1.6: Escáner de guía física en mano para salida a reparto activo
+$router->post('api/entrega/escanear-salida', 'EntregaController@escanearSalidaGuia'); // Endpoint para que el repartidor escanee la guía física al salir a reparto, validando que la guía esté asignada a él y actualizando el estado del pedido a "En Reparto"
+// RF-5.1: Consultar pre-liquidación y balance matemático
+$router->get('api/entrega/calcular-liquidacion', 'EntregaController@consultarPreLiquidacion');
+// RF-5.2: Ejecutar liquidación física y cierre de caja menor
+$router->post('api/entrega/liquidar-oficina', 'EntregaController@liquidarJornadaOficina');
 // =========================================================================
-// 📦 RECURSO: PRODUCTOS E INVENTARIO (`admin/productos`)
+// 🚛 RECURSO: GESTION DE PORDUCTOS (`/api/producto`)
 // =========================================================================
-$router->get('admin/productos', 'ProductoController@listar');          // GET = Obtener catálogo
-$router->post('admin/productos', 'ProductoController@registrar');      // POST = Agregar al stock
-$router->post('admin/productos/buscar', 'ProductoController@buscarPorCodigo'); // Búsqueda específica del escáner
-
-// =========================================================================
-// 🛒 RECURSO: PEDIDOS Y ÓRDENES (`/pedidos`)
-// =========================================================================
-$router->post('cliente/pedidos', 'PedidoController@procesarOrden');        // POST = Crear una orden de compra
-$router->get('pedidos/acciones-cliente', 'PedidoController@procesarAccionCliente'); // Respuestas interactivas (WhatsApp)
+$router->get('api/producto/verificar-codigo', 'ProductoController@verificarCodigo');
+$router->post('api/producto/crear', 'ProductoController@crearProducto');    // Endpoint para crear un nuevo producto en el sistema (solo para administradores)
+$router->get('api/producto/listar', 'ProductoController@listarProductos');   // Endpoint para listar los productos disponibles en el sistema (con paginación y filtros)
+$router->post('api/producto/actualizar', 'ProductoController@actualizarProducto'); // Endpoint para actualizar la información de un producto existente (solo para administradores)
+$router->post('api/producto/eliminar', 'ProductoController@eliminarProducto'); // Endpoint para eliminar un producto del sistema (solo para administradores)
 
 // =========================================================================
-// 🚀 RECURSO: LOGÍSTICA INTERNA / ALMACÉN (`staff/picking`)
+// 💰 RECURSO: CONTROL DE CAJA MENOR (`/api/caja-menor`)
 // =========================================================================
-$router->post('staff/picking/verificar', 'LogisticaController@verificarItemEscaneado'); // Validación de ítem
-$router->post('staff/picking/finalizar', 'LogisticaController@finalizarEmpaque');      // Cerrar caja física
+$router->post('api/caja-menor/cerrar', 'CajaMenorController@registrarCierre'); 
+$router->post('api/caja-menor/recibir-reembolso', 'CajaMenorController@recibirReembolso');
+$router->post('api/caja-menor/crear', 'CajaMenorController@crearCajaMenor');
 
-// =========================================================================
-// 🛵 RECURSO: DESPACHOS Y ENTREGAS (`/despachos`)
-// =========================================================================
-$router->post('admin/despachos', 'LogisticaController@asignarAdomiciliario');     // POST = Crear una asignación de ruta
-$router->get('delivery/despachos', 'LogisticaController@verMiHojaDeRuta');         // GET = Listar órdenes asignadas al motorizado
-$router->post('delivery/despachos/entregar', 'LogisticaController@registrarEntregaExitosa'); // POST = Confirmar entrega física
-$router->post('motorizado/pedidos/incidencia', 'PedidoController@registrarIncidenciaCalle');
-$router->post('motorizado/pedidos/actualizar-estado', 'PedidoController@actualizarEstadoDesdeCalle');
-$router->get('motorizado/pedidos/mi-ruta', 'PedidoController@obtenerMiHojaDeRuta');
-// =========================================================================
-// 💰 RECURSO: FINANZAS, CAJAS Y ARQUEOS (`/pagos` o `/cajas`)
-// =========================================================================
-$router->post('cliente/pagos', 'PagoController@informarPago');               // POST = Cliente sube comprobante
-$router->post('admin/pagos/auditar', 'PagoController@validarPagoAdmin');        // POST = Admin aprueba o rechaza transferencia
-$router->get('admin/repartidores/caja', 'PagoController@verEfectivoPendienteDelivery'); // GET = Consultar saldo en la calle (?id_repartidor=5)
-$router->post('admin/repartidores/liquidador', 'PagoController@liquidarCajaDelivery');  // POST = Cuadrar caja del repartidor en oficina
 
-// =========================================================================
-// 📊 RECURSO: AUDITORÍA DE SISTEMA (`admin/sistema`)
-// =========================================================================
-$router->get('admin/sistema/historial', 'UsuarioController@verAuditoriaSistema'); // GET = Ver logs globales del negocio
-$router->post('admin/caja/liquidar', 'PagoController@liquidarCajaDelivery'); // POST = Liquidar caja del repartidor (cambio de estado a 'liquidado' e inyección de fecha de arqueo)
-$router->get('admin/dashboard/kpis', 'DashboardController@obtenerMetricasPrincipales');
-// Retornamos el enrutador configurado profesionalmente
 return $router;

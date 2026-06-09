@@ -1,5 +1,5 @@
 <?php
-// src/Models/Producto.php
+// src/Models/Producto.php NUEVOmODELOS. VERSION 2
 
 require_once __DIR__ . '/../../config/database.php';
 
@@ -28,6 +28,92 @@ class Producto {
             ]);
         } catch (PDOException $e) {
             error_log("Error en Producto::crear -> " . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * RF-3.1: Verifica si un código de barras ya existe
+     */
+    public static function verificarCodigoBarras(string $codigo): ?array {
+        $db = Database::conectar();
+        $sql = "SELECT id_producto, nombre, stock FROM productos WHERE codigo_barras = :codigo LIMIT 1";
+        $stmt = $db->prepare($sql);
+        $stmt->execute([':codigo' => $codigo]);
+        return $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
+    }
+
+    /**
+     * RF-3.1 y RF-3.2: Registrar producto con transaccionalidad para su galería
+     */
+    public static function registrarConGaleria(array $datosProducto, array $imagenes): int {
+        try {
+            $db = Database::conectar();
+            $db->beginTransaction();
+
+            // 1. Insertar en la tabla productos
+            $sqlProd = "INSERT INTO productos (
+                            id_categoria, codigo_barras, imagen_url, nombre, 
+                            descripcion, precio, stock, tipo_disponibilidad, 
+                            dias_espera_encargo, fecha_vencimiento, fecha_creacion
+                        ) VALUES (
+                            :id_categoria, :codigo_barras, :imagen_url, :nombre, 
+                            :descripcion, :precio, :stock, :tipo_disponibilidad, 
+                            :dias_espera_encargo, :fecha_vencimiento, NOW()
+                        )";
+            
+            $stmtProd = $db->prepare($sqlProd);
+            $stmtProd->execute([
+                ':id_categoria'         => $datosProducto['id_categoria'],
+                ':codigo_barras'        => $datosProducto['codigo_barras'],
+                ':imagen_url'           => $datosProducto['imagen_url'], // Portada principal guardada en productos para compatibilidad
+                ':nombre'               => $datosProducto['nombre'],
+                ':descripcion'          => $datosProducto['descripcion'],
+                ':precio'               => $datosProducto['precio'],
+                ':stock'                => $datosProducto['stock'],
+                ':tipo_disponibilidad'  => $datosProducto['tipo_disponibilidad'],
+                ':dias_espera_encargo'  => $datosProducto['dias_espera_encargo'],
+                ':fecha_vencimiento'    => $datosProducto['fecha_vencimiento']
+            ]);
+
+            $idProducto = (int)$db->lastInsertId();
+
+            // 2. RF-3.2: Indexar la galería de imágenes múltiples en la tabla relacional
+            $sqlImg = "INSERT INTO producto_imagenes (id_producto, ruta_imagen, es_principal, fecha_subida) 
+                       VALUES (:id_producto, :ruta_imagen, :es_principal, NOW())";
+            $stmtImg = $db->prepare($sqlImg);
+
+            foreach ($imagenes as $img) {
+                $stmtImg->execute([
+                    ':id_producto' => $idProducto,
+                    ':ruta_imagen' => $img['ruta'],
+                    ':es_principal'=> $img['es_principal'] ? 1 : 0
+                ]);
+            }
+
+            $db->commit();
+            return $idProducto;
+        } catch (PDOException $e) {
+            if (isset($db) && $db->inTransaction()) {
+                $db->rollBack();
+            }
+            error_log("Error crítico en Producto::registrarConGaleria -> " . $e->getMessage());
+            return 0;
+        }
+    }
+    public static function obtenerPorId($idProducto) {
+        try {
+            $db = Database::conectar();
+            $sql = "SELECT id_producto, codigo_barras, nombre_categoria, descripcion, precio, stock, tipo_disponibilidad, dias_espera_encargo, fecha_vencimiento 
+                    FROM productos 
+                    WHERE id_producto = :id_producto 
+                    LIMIT 1";
+            
+            $stmt = $db->prepare($sql);
+            $stmt->execute([':id_producto' => $idProducto]);
+            return $stmt->fetch(PDO::FETCH_ASSOC);
+        } catch (PDOException $e) {
+            error_log("Error en Producto::obtenerPorId -> " . $e->getMessage());
             return false;
         }
     }
@@ -88,7 +174,9 @@ class Producto {
     public static function buscarPorCodigoBarras($codigo_barras) {
         try {
             $db = Database::conectar();
-            $sql = "SELECT id_producto, codigo_barras, nombre, descripcion, precio, stock, tipo_disponibilidad, dias_espera_encargo, fecha_vencimiento 
+            $sql = "SELECT id_producto, codigo_barras, nombre, descripcion, precio, stock, 
+                    tipo_disponibilidad, 
+                    dias_espera_encargo, fecha_vencimiento 
                     FROM productos 
                     WHERE codigo_barras = :codigo_barras 
                     LIMIT 1";

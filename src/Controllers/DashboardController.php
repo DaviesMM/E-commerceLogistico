@@ -8,7 +8,7 @@ require_once __DIR__ . '/../Middleware/AuthMiddleware.php';
 class DashboardController {
 
     public function obtenerMetricasPrincipales() {
-        AuthMiddleware::autenticar(); // Validar acceso staff/admin
+        AuthMiddleware::verificarAcceso($roles =['staff', 'admin']); // Validar acceso staff/admin
 
         try {
             $db = Database::conectar();
